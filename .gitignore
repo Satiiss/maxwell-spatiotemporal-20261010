@@ -1,0 +1,12 @@
+data/
+build/
+cpp/build/*
+!cpp/build/.gitkeep
+__pycache__/
+*.pyc
+*.h5
+.venv/
+*.log
+*.cfg
+.env
+.env.*

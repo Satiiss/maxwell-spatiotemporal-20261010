@@ -1,0 +1,34 @@
+protocol:
+  type: single_pulse
+  amplitude_mv: 400.0
+  pulse_width_us: 300             # Per phase, per experiment_template.md.
+  inter_phase_interval_us: 0
+  polarity: negative_first       # Inverting voltage mode: 512+bits, then 512-bits.
+  sequence_tick_us: 50           # Independent of recording sampling rate, per system.py.
+  sequence_initial_delay_samples: 100
+probe:
+  trials_per_electrode: 10
+  frequency_hz: 2.0
+  response_window_ms: [10.0, 50.0]
+  artifact_window_ms: [0.0, 3.0]
+  artifact_min_spikes: 300        # Strict >300 for this experiment; saved alongside generic QC.
+  success_fraction_threshold: 0.60 # Strict >0.60, so at least 7/10.
+  threshold_rule: null            # Required for hardware: mean_plus_3sd or mean_plus_3variance.
+  baseline_window_ms: 40.0
+  formal_unit_count: 3
+  formal_electrodes_per_unit: 2
+  enforce_artifact_qc: true
+  inter_electrode_pause_sec: 0.5
+formal:
+  pre_spontaneous_sec: 600
+  post_spontaneous_sec: 600
+  trials_per_condition: 50
+  trial_interval_sec: 1.0
+  temporal_interval_mode: after_second # Confirmed: wait 1s after the second biphasic pulse ENDS.
+  dt_ms: [1, 5, 10, 20, 50, 100, 500, 1000]
+  rest_between_stages_sec: 300
+  rest_after_last_stage_sec: 300
+  condition_order: cyclic         # Fixed cyclic interleaving; 50 rounds, no blocked repeats.
+  recording_tail_sec: 0.25
+analysis:
+  deferred: true                  # Full response pipeline / ESRC deferred by user.

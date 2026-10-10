@@ -1,2 +1,202 @@
-# maxwell-spatiotemporal-20261010
-MaxWell spatial combination and temporal stimulation experiment: Probe, selection, acquisition, scheduling and software checks.
+# MaxWell 空间组合与时序刺激实验
+
+本项目按 `实验方案20261009.docx`（正文标题为“实验方案20261010”）和 docs 的 Markdown 规范生成。实现 Probe、有效电极筛选、单电极刺激、双电极同步刺激和双电极时序刺激的录制与调度。用户已说明现场准备尚未完成，CFG 可以先留空；完整分析 pipeline 和 ESRC 验证暂不实现。
+
+## 实验目标与假设
+
+考察空间组合及刺激先后顺序是否扩展网络的有效诱发响应状态。正式条件共108个：6个单电极、6个同步组合、12个有向组合×8个dt；每条件50次，共5400 trial。
+
+放置细胞、静置2–3h、Scan、电极分配及自发网络候选中心的人工复核属于方案第一条分隔线以上的现场工作。程序不宣称这些步骤已完成，不自动替换候选中心或降低网络阈值。可导入已有600s自发基线；未提供H5时程序先记录600s自发数据。候选中心仍须由人工提供5–6个电极ID。
+
+## 项目目录
+
+```text
+spatiotemporal_20261010/
+  main.py
+  setup.py
+  requirements.txt
+  config/system.yaml
+  config/stimulation.yaml
+  python/
+    experiment_runner.py
+    maxwell_setup.py
+    mock_backend.py
+    schedule.py
+    site_selection.py
+    figures.py
+    gui.py
+    utils/{persistence,progress,time_log}.py
+  analysis/
+    analysis_utils.md
+    utils/io.py
+    utils/probe.py
+    utils/detection/burst.py
+  cpp/CMakeLists.txt
+  cpp/src/spike_monitor.cpp
+  scripts/build_cpp.sh
+  tests/test_experiment.py
+  data/{YYYYMMDD_HHMMSS}_data/
+```
+
+`python`负责配置、录制、路由及服务器Sequence；本实验为开环调度，没有依赖实时spike触发的闭环算法。C++仅提供可选的被动IIR数据流监视，不发刺激。它在使用前自动编译，通过Python子进程管理，错误退出会阻止后续刺激。
+
+## 参数
+
+| 项目 | 参数或规则 |
+|---|---|
+| 培养物 | `culture.id`、`culture.div`留空，现场填写 |
+| CFG | `electrode_map.cfg_path: null`，现场填写 |
+| 候选中心 | `manual_inputs.candidate_centers: []`，填写5–6个电极ID |
+| 中心距离 | 微米坐标欧氏距离严格>3×17.5µm |
+| unit | 中心+当前CFG中物理最近的3个电极；重复、重叠和不可路由情况报错 |
+| Probe | 每unit的4个单电极各10次、2Hz、400mV、单相300µs、先负后正 |
+| Probe响应 | [10,50)ms population spike count，与去burst的同宽40ms背景窗口分布比较 |
+| Probe有效性 | 响应成功比例严格>0.60；10次至少7次。伪迹QC默认参与有效trial判定 |
+| 正式选点 | 合格unit的有效电极数量优先，其次响应概率；选3unit×2电极 |
+| 正式刺激 | 每条件50trial；条件循环交叉，不连续重复同条件50次 |
+| 同步组合 | 3个unit内组合+3个最优a电极跨unit组合 |
+| dt | 1、5、10、20、50、100、500、1000ms，均为第一与第二脉冲起始边沿差 |
+| 休息 | 单电极、同步及每个dt阶段后各300s；期间断开active，继续录制 |
+| 前后自发 | 正式刺激前600s，最后休息后再600s |
+| 刺激池 | pool_fast；每trial仅修改上一组/当前组，禁止每trial整池重配 |
+| 两个刺激单元 | 必须不同；DAC0/1分担，同步用 `DAC(3, code0, code1)` |
+| 脉冲 | 查询真实LSB；512+bits负相→512−bits正相→512中性 |
+| 图示 | 英文文字、白底无网格、600dpi自动PNG+PDF+SVG；空间图100µm比例尺 |
+
+方案中 `[u3-1,u3-b]` 按图示和前文命名理解为 `[u3-a,u3-b]`。300µs按Markdown的单相脉宽定义实现，双相总时长600µs。400mV为每相相对于0V的绝对幅值。序列DelaySamples的50µs步长来自本地官方 `system.py`，独立于记录采样率。
+
+## Probe阈值定义与已确认的时序间隔
+
+`probe.threshold_rule`暂为null。可选：
+
+- `mean_plus_3variance`：响应计数 > 同宽非burst背景均值 + 3×方差，保留方案字面公式。
+- `mean_plus_3sd`：响应计数 > 同宽非burst背景均值 + 3×标准差。
+
+真实执行前必须明确选择，程序不隐式将方差替换成标准差。模拟模式临时使用mean_plus_3sd，并在本次参数快照中标明；原始配置仍保持null。
+
+用户已确认 `formal.temporal_interval_mode: after_second`：一对时序刺激的第二个双相脉冲完整结束后，等待1s，再开始下一对。因此第一脉冲起始间隔为dt+第二双相脉冲总时长+1s；单相300µs、相间隔0时，总时长为600µs。每个固定dt循环交叉12个有向电极对，共50轮、600trial，全部完成后休息5min，再进入下一个dt。`onset_to_onset`仅保留为其他协议的可配置选项，不用于本次确认的方案。
+
+## 运行
+
+Python 3.10以上，真实执行在Linux MaxLab设备电脑上进行；Windows可运行模拟、配置和计划。
+
+仓库为私有项目。Linux 上先使用自己的 GitHub 账号完成 Git 身份验证，再克隆代码：
+
+```bash
+git clone https://github.com/Satiiss/maxwell-spatiotemporal-20261010.git
+cd maxwell-spatiotemporal-20261010
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+```bash
+python -m pip install -r requirements.txt
+python main.py --dry-run
+python main.py --mode mock --headless --quick
+python main.py --mode mock --gui
+```
+
+`--dry-run`只保存完整条件数量、时间/存储估算和参数快照，不加载SDK、不联网、不生成伪造的真实数据。`--quick`仅缩短模拟正式trial数为每条件2次、模拟初始基线为40s；Probe仍为每电极10次。真实模式忽略模拟覆盖参数。
+
+真实运行：先安装官方maxlab包，填写配置；CFG、基线、候选中心、培养物编号、DIV及Probe公式均在现场确定。GUI的文件与公式字段只影响本次运行的快照，不覆盖原始YAML。
+
+```bash
+python main.py --mode hardware --enable-hardware --headless
+python main.py --mode hardware --gui
+```
+
+可选C++监视配置：
+
+```yaml
+maxwell:
+  api_parent: /path/containing/maxlab
+  maxlab_root: /path/to/maxlab_lib
+  monitor_enabled: true
+```
+
+`maxlab_root`同时兼容含maxlab/include的maxlab_lib父目录和直接含include/lib的maxlab目录。只有启用监视器或传入 `--build-cpp` 才依赖CMake和GNU C++20。Conda环境使用其lib目录及运行时搜索路径。
+
+GUI提供两层进度、CFG空间图和当前电极箭头、当前条件/电极/轮次/实际协议、位点结果表、停止、Probe跳过和重试。重试保留旧attempt文件，新建attempt目录，不覆盖。主线程只刷新状态，耗时录制、分析和绘图在worker执行。关闭窗口先等待停止和文件收尾完成。
+
+当前Probe指标在每个电极的H5关闭后根据硬件事件帧计算，UI在录制期间明确显示“待文件关闭后计算”，不将主机时间计数当成硬件对齐结果。逐trial实时伪迹与响应展示、完整连接Map嵌入及正式分析pipeline属于后续GUI/分析扩展，不在本次实现中伪造。
+
+## 录制与时间记录
+
+为同时保留方案的一次正式前/后基线和Markdown固定三段结构，正式实验作为一个block：
+
+```text
+run_dir/
+  HHhMMmSSs.cfg
+  log.txt
+  external_time_table.csv
+  source_inputs.json
+  experiment_plan.json
+  config_snapshot/{system,stimulation}.yaml
+  pre_experiment/
+    workflow_state.json
+    parameters.yaml
+    01_spontaneous/             # 未导入已有基线时
+    baseline_reference.json    # 导入已有基线时
+    baseline_bursts.csv
+    baseline_background_windows.csv
+    baseline_statistics.json
+    candidate_sites.csv
+    candidate_units.{png,pdf,svg}
+    02_probe/candidate_XX/
+      routing.json
+      ele_ID_attempt_XX/
+        *.raw.h5
+        stim_times.txt
+        stim_events.csv
+        trial_manifest.csv
+        trial_journal.jsonl
+        trial_metrics.csv
+        probe_metrics.json
+        raster.{png,pdf,svg}
+    probe_summary.{csv,png,pdf,svg}
+    selected_formal_sites.yaml
+  raw_data/spatiotemporal/
+    block_meta.yaml
+    condition_manifest.csv
+    01_pre_spont/*.raw.h5
+    02_stim/
+      *.raw.h5
+      stim_times.txt
+      stim_events.csv
+      trial_manifest.csv
+      trial_journal.jsonl
+      segment_time_meta.json
+    03_post_spont/*.raw.h5
+  experiment_result.json
+```
+
+一个正式刺激H5包含全部交叉条件和5min休息。拆分分析必须用 `trial_manifest.csv` 的condition、stage和event_ids，不能把一个文件视作单条件。全方案10200个事件时刻：单电极300、同步300（同一事件时刻双电极同时脉冲）、时序9600。
+
+每个脉冲在同一Sequence中插入合法key-value Event。同步有一个事件、两个DAC同时更新；时序分别有第一和第二事件，用DelaySamples精确控制dt，扣除第一脉冲600µs波形时长。不同trial使用唯一event_id。
+
+文件关闭后，以本H5首帧为原点读取events导出stim_times.txt；txt、spikes及trial_manifest使用同一时间坐标。时序manifest以第二事件作为后续3–50ms分析锚点。run级墙钟CSV只作审计。主机估计与事件差>50ms写WARNING；缺事件、重复事件或实际dt不符则停止，不把估计时刻当已验证刺激。
+
+每次main创建全新的时间目录；相同秒目录已存在时明确报错。逐trial命令记录立即写journal并fsync；每段刺激结束立即导出段内表。失败保留journal及失败状态，停止刺激、先stop_recording、等待写盘、再stop_file，断开并关闭stim unit、DAC回中性。若硬件收尾失败单独记录cleanup_failure.json。不会自动向不完整H5尾部续写，也不会自动绕过失败阶段开始正式刺激。
+
+完整raw记录很大：默认after_second调度下，正式阶段名义约176.9min；1024通道、20kHz、uint16未压缩估算约435GB，实际取决于映射通道数、压缩和路由/构建耗时。请配置足够空间的数据盘。保留raw是为了后续第一脉冲污染与同步伪迹排查。
+
+## 与Markdown及方案的对应
+
+- `experiment_template.md`：独立项目、单入口、YAML、run归档、三段录制、Event和段内时间表。
+- `data_template.md`：CFG微米坐标、H5映射校验、全局帧换算与run审计表。
+- `stim_pool_routing_limits.md`：unique stim units、DAC0/1、仅prev/current快切；settle wait默认50ms只是初始值，需要用现场测量值替换，未做真实A/B验证。
+- `pre_experiment_automation.md`：本次采用人工审阅中心输入，不启用自动高出度选点状态机；Probe响应定义按本次方案覆盖默认3–50ms/2倍局部基线规则，保留严格>60%接续门槛。
+- `analysis_template.md`：Probe保存0–2ms均值及通用>=200标记，同时按本次方案保存0–3ms严格>300及10–50ms判定；正式数据检查pipeline按用户要求暂缓。
+- `coding_style.md`与`paper.md`：结果自动输出、参数快照、日志与进度、600dpi PNG及矢量图；无标题和背景网格。
+
+公共burst检测直接复用既有 `spont_burst_outdegree_handoff/spont_analysis/burst.py`，文件内容不改动。基线导入也可使用人工已复核的start_sec,end_sec CSV，避免强行使用不适合当前culture的默认burst参数。公共接口索引见 `analysis/analysis_utils.md`。
+
+## 软件检查与范围
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+软件检查覆盖调度计数、交叉顺序、两种时序方向、DAC极性、精确dt、严格7/10门槛、unit排名、时间原点及失败门控。模拟运行不导入maxlab、不连接设备，其H5带synthetic属性，没有真实raw电压。
+
+未进行真实刺激、Linux静态库链接、硬件路由/settling现场验收或实验科学结论验证。正式分析中的强响应概率、稳定延时Map、Consistency、ESRC和第一刺激污染验证按用户最新要求暂缓。

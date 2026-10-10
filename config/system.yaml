@@ -1,0 +1,48 @@
+culture:
+  id: null
+  div: null
+experiment:
+  date: "2026-10-10"
+  name: spatiotemporal_20261010
+  recording_name_prefix: spatiotemporal
+electrode_map:
+  cfg_path: null                  # Fill in the actual CFG before hardware execution.
+data:
+  root: ./data
+manual_inputs:
+  baseline_h5: null               # Optional: existing 600 s spontaneous recording.
+  baseline_bursts_csv: null       # Optional manual reviewed burst intervals: start_sec,end_sec.
+  candidate_centers: []           # 5 or 6 electrode IDs, from the manually reviewed network.
+  network_review_record: null     # Optional path to manual network parameter/review report.
+  baseline_duration_sec: 600
+  minimum_center_distance_pitches: 3.0  # Strict >3 pitches, no automatic centre substitution.
+  electrode_pitch_um: 17.5
+maxwell:
+  device: maxone
+  well: 0
+  event_threshold: 8.5
+  amplifier_gain: 512
+  api_parent: null                # Directory containing the official maxlab package.
+  maxlab_root: null               # Directory containing maxlab/include and maxlab/lib.
+  monitor_enabled: false          # Optional passive C++ monitoring; never triggers stimulation.
+  monitor_executable: cpp/build/spike_monitor
+  raw_recording: true
+  wait_after_recording_sec: 2.0
+routing:
+  mode: pool_fast                 # Needed for interleaved conditions.
+  require_unique_stim_units: true
+  settle_wait_ms: 50.0            # Conservative initial value; replace with measured lab value.
+  maximum_stim_units: 32
+burst_detection:
+  bin_ms: 1.0
+  smooth_ms: 50.0
+  threshold_z: 6.0
+  min_duration_ms: 30.0
+  merge_gap_ms: 30.0
+  min_spikes: 5
+gui:
+  enabled: true
+mock:
+  seed: 20261010
+  trials_per_condition_override: null  # Null runs the complete 5400-trial schedule.
+  baseline_duration_override_sec: null
