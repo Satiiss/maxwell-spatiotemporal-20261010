@@ -13,7 +13,6 @@
 ```text
 spatiotemporal_20261010/
   main.py
-  analyze_baseline.py           # 独立离线基线分析，不接触硬件
   setup.py
   requirements.txt
   config/system.yaml
@@ -38,12 +37,22 @@ spatiotemporal_20261010/
   cpp/CMakeLists.txt
   cpp/src/spike_monitor.cpp
   scripts/build_cpp.sh
-  scripts/inspect_recording_settings.py # 只读核对基线/Probe元数据
+  scripts/prepare_probe_routing.py # SDK服务器上的候选路由准备
+  tools/                          # 额外的离线分析、诊断、复核和绘图
+    analyze_baseline.py
+    inspect_recording_settings.py
+    inspect_probe_results.py
+    review_probe_rate_variance.py
+    probe_rate_variance.py
+    plot_probe_rasters.py
+    probe_raster_review.py
   tests/test_experiment.py
   data/{YYYYMMDD_HHMMSS}_data/
 ```
 
 `python`负责配置、录制、路由及服务器Sequence；本实验为开环调度，没有依赖实时spike触发的闭环算法。C++仅提供可选的被动IIR数据流监视，不发刺激。它在使用前自动编译，通过Python子进程管理，错误退出会阻止后续刺激。
+
+额外的离线入口及其专用辅助模块集中放在根目录的 `tools/`，运行方式见 [tools/README.md](tools/README.md)。这些文件从原位置迁移，旧的根目录 `analyze_baseline.py` 和 `scripts/` 中对应只读命令不再作为入口；请使用本文更新后的命令。`main.py`继续作为实验入口，结果仍写入本项目的 `data/`。
 
 ## 参数
 
@@ -151,7 +160,7 @@ H5/CFG映射核对通过后，先分析自发网络，再人工复核5–6个候
 conda activate maxlab
 cd /home/maxwell/Desktop/maxwell_platform/experiments/spatiotemporal_20261010
 git pull --ff-only
-python -B analyze_baseline.py \
+python -B tools/analyze_baseline.py \
   --h5 /home/maxwell/Data/20261011-hzl-28878/261011/28878/Network/000004/data.raw.h5 \
   --cfg /home/maxwell/configs/261011/01h19m58s.cfg
 ```
@@ -266,14 +275,14 @@ Probe最后一次刺激后保持录制开启，默认等待1.0秒，随后才调
 
 当前CFG的四电极池共用刺激单元时，可先执行`python -B scripts/prepare_probe_routing.py`尝试生成独立候选CFG。此命令使用唯一token的临时SDK Array，仅做服务器软件路由：选择原记录电极、提高原24个候选位点优先级、另存`data/<时间>_routing/candidate_probe.cfg`，再逐unit连接/查询刺激单元。不会初始化设备、下载CFG到芯片、操作DAC、创建Sequence或采集H5；原CFG、YAML和其他实验不修改。不保证路由成功，不自动替换中心及邻居。日志只有6个unit的结果及映射变化数量，详细列表在同目录`routing_preparation.json`。状态`routing_unavailable`表示少于3个unit软件可独立路由；`mapping_review_required`表示原记录映射或最近邻unit改变，不能把旧基线直接用于该候选配置；`candidate_for_hardware_routing_check`仅表示原映射/邻居保留且至少3个unit的软件查询通过，仍需单独进行零刺激硬件路由检查后才能启动Probe。命令结束会删除临时软件Array，候选CFG仅存文件，当前芯片路由保持原样。
 
-完成Probe但未达到有效位点要求时，可运行`python -B scripts/inspect_probe_results.py --run data/<本次结果目录>`，只读检查背景参数、末次计数为零的位点数量、6个示例电极的刺激前/后40ms逐次计数与末次raw/spike时间，核对H5实际spike_threshold及保存指标。通过`--electrodes ID1 ID2 ...`选择其他位点。脚本不读取raw电压、不连接设备、不修改源文件或筛选规则；刺激伪迹仍须按需要检查保存的原始波形。末次spike晚于50ms不是数据完整性的充分证明，晚于刺激仅几ms也不是缺失的单独证明。
+完成Probe但未达到有效位点要求时，可运行`python -B tools/inspect_probe_results.py --run data/<本次结果目录>`，只读检查背景参数、末次计数为零的位点数量、6个示例电极的刺激前/后40ms逐次计数与末次raw/spike时间，核对H5实际spike_threshold及保存指标。通过`--electrodes ID1 ID2 ...`选择其他位点。脚本不读取raw电压、不连接设备、不修改源文件或筛选规则；刺激伪迹仍须按需要检查保存的原始波形。末次spike晚于50ms不是数据完整性的充分证明，晚于刺激仅几ms也不是缺失的单独证明。
 
-用户要求尝试发放率方差时，可执行`python -B scripts/review_probe_rate_variance.py --run data/<本次结果目录>`做独立离线对照。保持40ms、原非burst窗口及全部记录电极群体总计数；每个窗口计数除以0.04得到Hz，均值除以0.04、样本方差除以0.04平方，Probe响应同样转换Hz。按用户字面规则数值计算均值+3倍方差，仍要求严格超过阈值及完整10次中至少7次成功。此规则数值相加Hz与Hz²，不是量纲一致或已标定的3sigma判据。现场背景参数对应约815.18Hz、138065.28Hz²，数值阈值约415011.01，等效40ms计数约16600.44，因此比原计数方差规则更严格。原H5/CSV/YAML不修改，不加载SDK，不改变真实采集规则；在独立`data/<时间>_rate_variance_review`保存config.yaml、背景及逐次/位点/unit对照、输入哈希和分析时间。该目录不作为正式实验来源，不自动重做Probe。
+用户要求尝试发放率方差时，可执行`python -B tools/review_probe_rate_variance.py --run data/<本次结果目录>`做独立离线对照。保持40ms、原非burst窗口及全部记录电极群体总计数；每个窗口计数除以0.04得到Hz，均值除以0.04、样本方差除以0.04平方，Probe响应同样转换Hz。按用户字面规则数值计算均值+3倍方差，仍要求严格超过阈值及完整10次中至少7次成功。此规则数值相加Hz与Hz²，不是量纲一致或已标定的3sigma判据。现场背景参数对应约815.18Hz、138065.28Hz²，数值阈值约415011.01，等效40ms计数约16600.44，因此比原计数方差规则更严格。原H5/CSV/YAML不修改，不加载SDK，不改变真实采集规则；在独立`data/<时间>_rate_variance_review`保存config.yaml、背景及逐次/位点/unit对照、输入哈希和分析时间。该目录不作为正式实验来源，不自动重做Probe。
 
 只读核对已有run的录制设置，不读取raw或spikes，不连接设备：
 
 ```bash
-python -B scripts/inspect_recording_settings.py --run data/20261011_133020_data
+python -B tools/inspect_recording_settings.py --run data/20261011_133020_data
 ```
 
 ## 可选的unit内交替Probe
@@ -328,7 +337,7 @@ python -m unittest discover -s tests -v
 已有每个位点目录中的 `raster.png/pdf/svg` 展示整段记录。以下只读命令直接从已关闭的 Probe H5 读取 spikes 和实际刺激事件，重绘毫秒级局部图；无需重新刺激：
 
 ```bash
-python -B scripts/plot_probe_rasters.py --run data/20261011_152853_data --electrodes 23209
+python -B tools/plot_probe_rasters.py --run data/20261011_152853_data --electrodes 23209
 ```
 
 去掉 `--electrodes 23209` 可处理全部已完成位点；不可路由位点记录为跳过。默认横轴为刺激前10 ms至后50 ms，可用 `--window-ms -50 200` 扩展。默认另存到本项目 `data/<时间>_probe_raster_review/<unit>/ele_<ID>/`，原 H5、metrics、配置和整段图不修改。时间原点必须与唯一 H5 事件吻合，且重新计算的10–50 ms计数必须与原metrics一致；不使用墙钟或估算时刻替代。缺事件或不一致时停止并报告。仅存在完成的 `analysis_result.json` 才表示整个绘图任务完成。

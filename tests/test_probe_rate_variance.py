@@ -9,7 +9,7 @@ import numpy as np
 import yaml
 
 from main import ROOT
-from python.probe_rate_variance import rate_statistics, review_rate_variance
+from tools.probe_rate_variance import rate_statistics, review_rate_variance
 from python.utils.persistence import atomic_json, sha256, write_csv
 
 

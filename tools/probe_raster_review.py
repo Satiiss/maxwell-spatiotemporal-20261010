@@ -4,7 +4,7 @@ from __future__ import annotations
 import numpy as np
 import matplotlib.pyplot as plt
 
-from .figures import configure, save
+from python.figures import configure, save
 
 
 def align_saved_events(session, trials):

@@ -20,7 +20,7 @@
 | `utils/probe.py` | `evaluate_probe` | 逐trial表、位点汇总、严格>60%可用性；本实验enforce_artifact_qc固定false，伪迹仅诊断 |
 | `utils/probe.py` | `rank_units` | 有效电极数优先、其次响应概率，选3unit×2电极 |
 
-此包实现实验前自发基线的burst/稳定延时出入度Map、候选建议，以及接续所需的Probe计算。完整正式响应数据质量分析、稳定延时Map、Consistency和ESRC按用户要求暂缓。新工具不依赖实验runner；离线入口 `analyze_baseline.py` 负责文件归档和人工复核状态。
+此包实现实验前自发基线的burst/稳定延时出入度Map、候选建议，以及接续所需的Probe计算。完整正式响应数据质量分析、稳定延时Map、Consistency和ESRC按用户要求暂缓。新工具不依赖实验runner；离线入口 `tools/analyze_baseline.py` 负责文件归档和人工复核状态。
 
 2026-10-10：新增H5/CFG契约和Probe API；复用既有burst模块。
 

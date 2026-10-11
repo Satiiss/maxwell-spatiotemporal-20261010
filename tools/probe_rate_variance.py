@@ -9,8 +9,8 @@ from pathlib import Path
 import numpy as np
 import yaml
 
-from .utils.persistence import atomic_json, sha256, utc_now, write_csv
-from scripts.inspect_probe_results import read_trials
+from python.utils.persistence import atomic_json, sha256, utc_now, write_csv
+from tools.inspect_probe_results import read_trials
 
 
 def rate_statistics(counts, width_sec):

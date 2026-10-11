@@ -16,7 +16,7 @@ from python.maxwell_setup import StimPoolConflict
 from python.mock_backend import MockBackend
 from python.utils.progress import Reporter
 from python.utils.persistence import sha256
-from scripts.inspect_recording_settings import read_settings
+from tools.inspect_recording_settings import read_settings
 
 
 class InterleavedChecks(unittest.TestCase):

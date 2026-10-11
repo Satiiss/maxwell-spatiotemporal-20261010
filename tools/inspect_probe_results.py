@@ -12,7 +12,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from analysis.utils.io import read_session
 from analysis.utils.probe import count_windows
-from scripts.inspect_recording_settings import read_settings
+from tools.inspect_recording_settings import read_settings
 
 
 def read_trials(row):

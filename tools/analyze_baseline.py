@@ -10,18 +10,21 @@ import logging
 import math
 import shutil
 import time
+import sys
 from datetime import datetime
 from pathlib import Path
 
 import numpy as np
 import yaml
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 from analysis.utils.io import read_session, read_burst_table
 from analysis.utils.spontaneous import analyze_spontaneous_network, select_network_candidates
 from analysis.utils.network_plots import render_network_figures
 from python.utils.persistence import atomic_json, write_csv, sha256, utc_now
 
-ROOT = Path(__file__).resolve().parent
 PAIR_FIELDS = {"pair_bin_ms", "pair_peak_ratio_threshold", "pair_min_shared_bursts", "pair_min_abs_delay_ms"}
 EDGE_FIELDS = ["source_channel", "target_channel", "source_electrode", "target_electrode", "shared_bursts",
                "delay_peak_ms", "signed_cb_minus_ca_ms", "delay_peak_ratio", "delay_peak_count"]

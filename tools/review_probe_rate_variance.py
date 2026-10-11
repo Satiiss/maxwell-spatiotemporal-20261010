@@ -4,7 +4,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from python.probe_rate_variance import review_rate_variance
+from tools.probe_rate_variance import review_rate_variance
 
 
 if __name__ == "__main__":

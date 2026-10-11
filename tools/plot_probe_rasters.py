@@ -15,9 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from analysis.utils.io import read_session
 from analysis.utils.probe import count_windows
-from python.probe_raster_review import align_saved_events, plot_site
+from tools.probe_raster_review import align_saved_events, plot_site
 from python.utils.persistence import atomic_json, sha256, utc_now, write_csv
-from scripts.inspect_probe_results import read_trials
+from tools.inspect_probe_results import read_trials
 
 
 def plot_run(run, electrodes=None, window_ms=(-10., 50.)):

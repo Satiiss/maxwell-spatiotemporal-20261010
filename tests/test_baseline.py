@@ -13,8 +13,8 @@ import h5py
 import numpy as np
 import yaml
 
-from analyze_baseline import ROOT, validate_config
-import analyze_baseline as cli
+from tools.analyze_baseline import ROOT, validate_config
+from tools import analyze_baseline as cli
 from analysis.utils.io import Session, read_session
 from analysis.utils.spontaneous import (histogram_peak_ratio, first_activation_matrix,
     directed_delay_edges, analyze_spontaneous_network, select_network_candidates)

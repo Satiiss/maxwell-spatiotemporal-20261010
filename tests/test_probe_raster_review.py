@@ -11,9 +11,9 @@ import h5py
 import numpy as np
 import yaml
 
-from python.probe_raster_review import align_saved_events, local_spikes, pooled_psth
+from tools.probe_raster_review import align_saved_events, local_spikes, pooled_psth
 from python.utils.persistence import sha256, write_csv
-from scripts.plot_probe_rasters import plot_run
+from tools.plot_probe_rasters import plot_run
 
 
 class ProbeRasterChecks(unittest.TestCase):
@@ -78,7 +78,7 @@ class ProbeRasterChecks(unittest.TestCase):
                 if dataset.name.endswith('/raw'):
                     raise AssertionError('Must not read raw voltage to plot spikes')
                 return original_get(dataset,key)
-            with patch('scripts.plot_probe_rasters.ROOT', root), patch.object(h5py.Dataset,'__getitem__',guarded_read), redirect_stdout(io.StringIO()):
+            with patch('tools.plot_probe_rasters.ROOT', root), patch.object(h5py.Dataset,'__getitem__',guarded_read), redirect_stdout(io.StringIO()):
                 output=plot_run(run)
             figures=output/'candidate_01/ele_100'
             for name in ['aligned_trials','artifact_zoom','trial_01_raster','trial_02_raster','psth','psth_after_3ms']:
