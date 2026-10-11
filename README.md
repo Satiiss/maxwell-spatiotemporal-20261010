@@ -262,6 +262,8 @@ Probe最后一次刺激后保持录制开启，默认等待1.0秒，随后才调
 
 `maxwell.event_threshold`是SDK在线spike检测阈值，单位为相对于均值的标准差倍数，不是Probe有效响应阈值；模板8.5未经本culture标定。手动基线及Probe的spike计数比较前，需要核对H5 settings中的spike_threshold、gain、hpf、sampling是否一致。其他实验的5.5不能直接照搬，也不能仅改变Probe检测阈值而继续使用检测设置不同的旧基线。记录采样率从H5读取；Sequence的50µs命令步长是独立概念，不用其他项目的sample_us字段覆盖设备采样率。
 
+真实Probe使用已有基线时，启动前只读核对基线H5的单一`spike_threshold`与`gain`，要求分别等于当前`maxwell.event_threshold`与`amplifier_gain`；缺失、非单一值或不一致时，在初始化设备之前停止。零刺激路由检查不使用响应基线，因此不执行这项检查。现场28878基线元数据为5.0、旧Probe为8.5，其余已核对的采集参数一致；沿用该基线时应将本机`config/system.yaml`的`maxwell.event_threshold`改为5.0。旧Probe的有效性不能沿用，改变YAML不会改变旧H5内已保存的spikes；是否重测须先解决路由及尾部记录问题。
+
 只读核对已有run的录制设置，不读取raw或spikes，不连接设备：
 
 ```bash

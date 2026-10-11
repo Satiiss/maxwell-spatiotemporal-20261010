@@ -194,6 +194,9 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
     try:
         check_environment(hardware=mode == "hardware" and not dry_run, api_parent=system["maxwell"].get("api_parent"))
         validate(system, stimulation, hardware=mode == "hardware" and not dry_run, probe_only=probe_only)
+        if mode == "hardware" and not dry_run and probe_only and not routing_check:
+            from python.acquisition_settings import validate_baseline_acquisition
+            validate_baseline_acquisition(system)
         plan = make_plan(system, stimulation, probe_only=probe_only)
         if formal_from is not None:
             plan.update(execution_scope="formal_only", probe_trial_count=0, source_probe_run=str(Path(formal_from).resolve()))
