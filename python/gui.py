@@ -209,7 +209,9 @@ def launch(system, stimulation, args):
                     if phase == "Probe位点评估":
                         table.insert("", "end", values=(item["unit_id"], item["electrode"],
                             f"{item['success_trials']}/{item['all_trials']}", f"{100*item['success_fraction']:.1f}%",
-                            f"{item['artifact_0_3ms_mean']:.1f}", f"{item['response_10_50ms_mean']:.1f}", "是" if item["eligible"] else "否"))
+                            "未测" if item["artifact_0_3ms_mean"] is None else f"{item['artifact_0_3ms_mean']:.1f}",
+                            "未测" if item["response_10_50ms_mean"] is None else f"{item['response_10_50ms_mean']:.1f}",
+                            "不可路由" if item.get("status") == "unroutable" else ("是" if item["eligible"] else "否")))
         except queue.Empty:
             pass
         root.after(100, poll)

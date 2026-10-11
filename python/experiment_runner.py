@@ -19,6 +19,7 @@ from .utils.persistence import atomic_json, write_csv, sha256, utc_now
 from .utils.time_log import ExternalTimeLog, SegmentStimLog
 from .utils.progress import ExperimentStopped
 from .figures import unit_map, raster, summary_table
+from .maxwell_setup import ElectrodeUnroutable
 
 
 class ExperimentRunner:
@@ -232,7 +233,30 @@ class ExperimentRunner:
                     # Probe is sequential: connect only this site, not all four neighbours.
                     # Complete its train before changing the route; never reroute per pulse.
                     logging.info("Probe单电极路由: unit=%s，电极=%d，attempt=%d", unit["unit_id"], electrode, attempt)
-                    pool = self.backend.route([electrode])
+                    try:
+                        pool = self.backend.route([electrode])
+                    except ElectrodeUnroutable as exc:
+                        if exc.electrode != electrode:
+                            raise
+                        # No sequence or recording has started for this attempt.
+                        # Keep the original candidate; do not substitute a neighbour.
+                        summary = dict(unit_id=unit["unit_id"], electrode=electrode,
+                            center=unit["center"], stimulation_unit=None, routing_mode="single_connect",
+                            h5=None, attempt=attempt, status="unroutable", route_error=str(exc),
+                            success_trials=0, all_trials=0, success_fraction=0.0, eligible=False,
+                            artifact_0_3ms_mean=None, artifact_0_3ms_total=None,
+                            artifact_0_2ms_mean=None, response_10_50ms_mean=None,
+                            response_10_50ms_total=None)
+                        atomic_json(directory / "probe_metrics.json", summary)
+                        atomic_json(directory / "routing.json", dict(mode="single_connect",
+                            status="unroutable", electrode=electrode, pool={}, error=str(exc)))
+                        site_summaries.append(summary)
+                        write_csv(pre / "probe_summary.csv", site_summaries)
+                        self.global_total -= rounds
+                        self.audit.add("probe_unroutable", electrodes=str(electrode), note=str(exc))
+                        logging.warning("%s；该位点未刺激，记录不可用后继续原候选位点", exc)
+                        self.reporter.emit("Probe位点评估", 1, 1, **summary)
+                        break
                     self.start_segment(directory, unit["unit_id"] + f"_ele{electrode}", "02_stim", rounds)
                     atomic_json(directory / "routing.json", dict(mode="single_connect", pool=pool))
                     action = None
@@ -278,7 +302,10 @@ class ExperimentRunner:
             valid = sorted([r for r in rows if r["eligible"]],
                            key=lambda r: (-r["success_fraction"], -r["response_10_50ms_mean"], r["electrode"]))
             unit_reports.append(dict(unit_id=unit["unit_id"], center=unit["center"],
-                tested_electrodes=unit["electrodes"], valid_electrode_count=len(valid),
+                candidate_electrodes=unit["electrodes"],
+                tested_electrodes=[r["electrode"] for r in rows if r["all_trials"] > 0],
+                unroutable_electrodes=[r["electrode"] for r in rows if r["status"] == "unroutable"],
+                valid_electrode_count=len(valid),
                 valid_electrodes=[r["electrode"] for r in valid], valid_site_metrics=valid,
                 enough_for_formal=len(valid) >= 2))
         unit_reports.sort(key=lambda u: (-u["valid_electrode_count"],
@@ -286,6 +313,7 @@ class ExperimentRunner:
         atomic_json(pre / "probe_unit_summary.json", unit_reports)
         write_csv(pre / "probe_unit_summary.csv", [dict(unit_id=u["unit_id"], center=u["center"],
             valid_electrode_count=u["valid_electrode_count"], valid_electrodes=";".join(map(str, u["valid_electrodes"])),
+            unroutable_electrodes=";".join(map(str, u["unroutable_electrodes"])),
             enough_for_formal=u["enough_for_formal"]) for u in unit_reports])
         self.probe_ready = sum(u["enough_for_formal"] for u in unit_reports) >= cfg["formal_unit_count"]
         self.formal_units = (rank_units(site_summaries, cfg["formal_unit_count"], cfg["formal_electrodes_per_unit"])

@@ -64,10 +64,11 @@ def summary_table(rows, stem):
     configure()
     fig, ax = plt.subplots(figsize=(7.20, max(1.5, .17 * len(rows) + .5)))
     ax.axis("off")
-    columns = ["Unit", "Electrode", "Success", "Artifact 0–3 ms", "Response 10–50 ms", "Eligible"]
+    columns = ["Unit", "Electrode", "Success", "Artifact 0–3 ms", "Response 10–50 ms", "Eligible", "Status"]
     cells = [[r["unit_id"], str(r["electrode"]), f"{r['success_trials']}/{r['all_trials']}",
-              f"{r['artifact_0_3ms_mean']:.1f}", f"{r['response_10_50ms_mean']:.1f}",
-              "Y" if r["eligible"] else "N"] for r in rows]
+              "N/A" if r["artifact_0_3ms_mean"] is None else f"{r['artifact_0_3ms_mean']:.1f}",
+              "N/A" if r["response_10_50ms_mean"] is None else f"{r['response_10_50ms_mean']:.1f}",
+              "Y" if r["eligible"] else "N", r.get("status", "complete")] for r in rows]
     table = ax.table(cellText=cells, colLabels=columns, loc="center", cellLoc="center")
     table.auto_set_font_size(False)
     table.set_fontsize(5)

@@ -16,6 +16,14 @@ def require_ok(value, action):
         raise RuntimeError(f"{action} 失败: {value!r}")
 
 
+class ElectrodeUnroutable(RuntimeError):
+    """Connect acknowledged, but the SDK returned no stimulation unit."""
+
+    def __init__(self, electrode):
+        self.electrode = int(electrode)
+        super().__init__(f"电极{electrode}连接后刺激单元查询为空；当前CFG下未分配刺激单元")
+
+
 class MaxLabBackend:
     realtime = True
 
@@ -69,6 +77,8 @@ class MaxLabBackend:
         for electrode in electrodes:
             require_ok(array.connect_electrode_to_stimulation(electrode), f"路由电极{electrode}")
             text = str(array.query_stimulation_at_electrode(electrode)).strip()
+            if not text:
+                raise ElectrodeUnroutable(electrode)
             if not text.isdigit() or not 0 <= int(text) < self.system["routing"]["maximum_stim_units"]:
                 raise RuntimeError(f"电极{electrode}无法分配刺激单元: {text!r}")
             unit = int(text)

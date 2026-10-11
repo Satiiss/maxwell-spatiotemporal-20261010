@@ -15,7 +15,7 @@ from main import load_configuration, make_plan, ROOT, validate
 from python.schedule import formal_conditions, round_robin, Condition, waveform_commands, next_onset_interval
 from python.site_selection import build_local_units
 from python.mock_backend import synthetic_mapping
-from python.maxwell_setup import MaxLabBackend
+from python.maxwell_setup import MaxLabBackend, ElectrodeUnroutable
 from python.utils.progress import Reporter, ExperimentStopped
 from python.utils.time_log import SegmentStimLog
 from analysis.utils.io import read_session
@@ -337,6 +337,75 @@ class SoftwareChecks(unittest.TestCase):
             backend.route([11, 12])
         backend.array.download.assert_not_called()
         backend.mx.Sequence.assert_not_called()
+
+    def test_only_acknowledged_connect_with_empty_query_is_unroutable(self):
+        for query, connect, error in (("", "Ok", ElectrodeUnroutable),
+                                      ("ERROR", "Ok", RuntimeError),
+                                      ("", "ERROR", RuntimeError),
+                                      ("32", "Ok", RuntimeError),
+                                      (None, "Ok", RuntimeError)):
+            with self.subTest(query=query, connect=connect):
+                backend = MaxLabBackend(self.system, Reporter())
+                backend.mx, backend.array = MagicMock(), MagicMock()
+                backend.cfg, backend.mapping = Path("unused.cfg"), []
+                backend.array.load_config.return_value = "Ok"
+                backend.array.connect_electrode_to_stimulation.return_value = connect
+                backend.array.query_stimulation_at_electrode.return_value = query
+                with self.assertRaises(error) as caught:
+                    backend.route([13983])
+                self.assertIs(type(caught.exception), error)
+                backend.array.download.assert_not_called()
+                backend.mx.Sequence.assert_not_called()
+
+    def test_unroutable_probe_sites_are_saved_and_remaining_candidates_tested(self):
+        self.system["mock"]["baseline_duration_override_sec"] = 40
+        self.stimulation["probe"]["threshold_rule"] = "mean_plus_3variance"
+        for skip_units in (0, 4):
+            with self.subTest(skip_units=skip_units), tempfile.TemporaryDirectory(dir=ROOT / "data") as directory:
+                reporter = Reporter()
+                backend = MockBackend(self.system, reporter)
+                runner = ExperimentRunner(self.system, self.stimulation, directory, backend, reporter)
+                route = backend.route
+                unavailable = set()
+                def route_with_missing(electrodes):
+                    if not unavailable:
+                        unavailable.update(e for u in runner.units[:skip_units] for e in u["electrodes"])
+                        if skip_units == 0:
+                            unavailable.add(runner.units[0]["center"])
+                    if electrodes[0] in unavailable:
+                        raise ElectrodeUnroutable(electrodes[0])
+                    return route(electrodes)
+                backend.route = MagicMock(side_effect=route_with_missing)
+                with patch("python.experiment_runner.unit_map"), patch("python.experiment_runner.raster"), \
+                        patch("python.experiment_runner.summary_table"), patch.object(runner, "formal") as formal:
+                    runner.run()
+                formal.assert_not_called()
+                path = Path(directory)
+                result = json.loads((path / "experiment_result.json").read_text())
+                self.assertEqual(result["probe_trial_count"], (24 - len(unavailable)) * 10)
+                self.assertEqual(result["status"], "probe_complete" if skip_units == 0 else "probe_review_required")
+                self.assertEqual(runner.global_total, result["probe_trial_count"])
+                self.assertFalse(result["formal_started"])
+                self.assertEqual(backend.route.call_count, 24)
+                metrics = list(path.glob("pre_experiment/02_probe/*/*/probe_metrics.json"))
+                self.assertEqual(len(metrics), 24)
+                for file in metrics:
+                    row = json.loads(file.read_text(encoding="utf-8"))
+                    if row["electrode"] in unavailable:
+                        self.assertEqual(row["status"], "unroutable")
+                        self.assertFalse(row["eligible"])
+                        self.assertEqual(row["all_trials"], 0)
+                        self.assertIsNone(row["response_10_50ms_mean"])
+                        self.assertFalse(list(file.parent.glob("*.h5")))
+                        self.assertFalse((file.parent / "trial_journal.jsonl").exists())
+                    else:
+                        self.assertEqual(row["all_trials"], 10)
+                        self.assertEqual(row["status"], "complete")
+                reports = json.loads((path / "pre_experiment/probe_unit_summary.json").read_text())
+                self.assertEqual(len(reports), 6)
+                self.assertEqual(sum(len(u["unroutable_electrodes"]) for u in reports), len(unavailable))
+                self.assertEqual(sum(len(u["tested_electrodes"]) for u in reports), 24 - len(unavailable))
+                self.assertTrue(all(len(u["candidate_electrodes"]) == 4 for u in reports))
 
 
 if __name__ == "__main__":

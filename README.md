@@ -255,6 +255,8 @@ run_dir/
 
 每次main创建全新的时间目录；相同秒目录已存在时明确报错。逐trial命令记录立即写journal并fsync；每段刺激结束立即导出段内表。失败保留journal及失败状态，停止刺激、先stop_recording、等待写盘、再stop_file，断开并关闭stim unit、DAC回中性。若硬件收尾失败单独记录cleanup_failure.json。不会自动向不完整H5尾部续写，也不会自动绕过失败阶段开始正式刺激。
 
+Probe逐位点路由时，如果SDK确认connect成功而刺激单元查询为空，该位点保存为`status=unroutable`、`all_trials=0`、`eligible=false`；没有发送刺激，也没有该位点的H5，响应及伪迹指标为null（图表显示N/A）。随后继续原四电极unit中其余候选，不替换邻居。unit报告区分原候选、实际测试和不可路由电极，仍要求至少3个unit各有2个有效位点。SDK错误回复、非法单元编号、映射变化及正式多电极路由失败继续停止。旧版中途失败的run保留已完成数据；更新代码后重新启动会建立新run并从头Probe，不应把重新启动当作断点续测。
+
 完整raw记录很大：默认after_second调度下，正式阶段名义约176.9min；1024通道、20kHz、uint16未压缩估算约435GB，实际取决于映射通道数、压缩和路由/构建耗时。请配置足够空间的数据盘。保留raw是为了后续第一脉冲污染与同步伪迹排查。
 
 ## 与Markdown及方案的对应
