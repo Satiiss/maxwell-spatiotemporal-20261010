@@ -73,7 +73,9 @@ class MaxLabBackend:
                 raise RuntimeError(f"电极{electrode}无法分配刺激单元: {text!r}")
             unit = int(text)
             if unit in pool.values():
-                raise RuntimeError("多个电极共用同一stim unit，停止实验")
+                previous = next(e for e, assigned in pool.items() if assigned == unit)
+                raise RuntimeError(f"电极{previous}与{electrode}共用stim unit {unit}；"
+                                   "当前多电极池无法独立切换，停止实验")
             pool[electrode] = unit
             self.all_units.add(unit)
             require_ok(mx.send(mx.StimulationUnit(unit).power_up(True).connect(False).set_voltage_mode().dac_source(0)), "准备stim unit")

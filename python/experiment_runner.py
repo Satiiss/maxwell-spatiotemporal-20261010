@@ -185,7 +185,8 @@ class ExperimentRunner:
                    relation=condition.relation, dt_ms=condition.dt_ms, event_ids=ids,
                    send_epoch_sec=epoch, estimated_onsets_sec=onsets,
                    amplitude_mv=protocol["amplitude_mv"], pulse_width_us=protocol["pulse_width_us"],
-                   polarity=protocol["polarity"], routing_mode=self.system["routing"]["mode"],
+                   polarity=protocol["polarity"],
+                   routing_mode="single_connect" if condition.kind == "probe" else self.system["routing"]["mode"],
                    interval_sec=interval_sec, response_anchor="second" if condition.kind == "temporal" else "first")
         self.current_log.add_trial(row)
         self.audit.add("stim_send", epoch_sec=epoch, block=self.current_log.block, phase=self.current_log.phase,
@@ -218,15 +219,18 @@ class ExperimentRunner:
             self.global_total += (12 + 12 * len(self.stimulation["formal"]["dt_ms"])) * formal_rounds
         self.state("RUN_PROBE")
         for unit in self.units:
-            pool = self.backend.route(unit["electrodes"])
-            atomic_json(pre / "02_probe" / unit["unit_id"] / "routing.json", pool)
             for electrode in unit["electrodes"]:
                 attempt = 0
                 while True:
                     attempt += 1
                     condition = Condition(f"{unit['unit_id']}_ele{electrode}", "probe", (electrode,), (str(electrode),))
                     directory = pre / "02_probe" / unit["unit_id"] / f"ele_{electrode}_attempt_{attempt:02d}"
+                    # Probe is sequential: connect only this site, not all four neighbours.
+                    # Complete its train before changing the route; never reroute per pulse.
+                    logging.info("Probe单电极路由: unit=%s，电极=%d，attempt=%d", unit["unit_id"], electrode, attempt)
+                    pool = self.backend.route([electrode])
                     self.start_segment(directory, unit["unit_id"] + f"_ele{electrode}", "02_stim", rounds)
+                    atomic_json(directory / "routing.json", dict(mode="single_connect", pool=pool))
                     action = None
                     deadline = None
                     for trial in range(1, rounds + 1):
@@ -249,6 +253,7 @@ class ExperimentRunner:
                             eligible=False, artifact_0_3ms_mean=0.0, artifact_0_3ms_total=0,
                             artifact_0_2ms_mean=0.0, response_10_50ms_mean=0.0, response_10_50ms_total=0)
                     summary.update(unit_id=unit["unit_id"], electrode=electrode, center=unit["center"],
+                                   stimulation_unit=pool[electrode], routing_mode="single_connect",
                                    h5=str(session.path), attempt=attempt, status=action or "complete")
                     summary["eligible"] = bool(summary["eligible"] and actual_count == rounds and not action)
                     write_csv(directory / "trial_metrics.csv", trials,

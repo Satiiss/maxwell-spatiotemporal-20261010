@@ -210,6 +210,7 @@ class SoftwareChecks(unittest.TestCase):
         reporter = Reporter()
         with tempfile.TemporaryDirectory(dir=ROOT / "data") as directory:
             backend = MockBackend(self.system, reporter)
+            backend.route = MagicMock(wraps=backend.route)
             backend.shutdown = MagicMock(wraps=backend.shutdown)
             runner = ExperimentRunner(self.system, self.stimulation, directory, backend, reporter, probe_only=True)
             with patch("python.experiment_runner.unit_map"), patch("python.experiment_runner.raster"), \
@@ -217,6 +218,8 @@ class SoftwareChecks(unittest.TestCase):
                 runner.run()
             formal.assert_not_called()
             backend.shutdown.assert_called_once()
+            self.assertEqual(backend.route.call_count, 24)
+            self.assertTrue(all(len(call.args[0]) == 1 for call in backend.route.call_args_list))
             self.assertFalse(backend.recording)
             self.assertEqual(backend.active, {})
             path = Path(directory)
@@ -227,6 +230,14 @@ class SoftwareChecks(unittest.TestCase):
             self.assertFalse(result["formal_started"])
             self.assertEqual(runner.global_total, 240)
             self.assertEqual(len(list((path / "pre_experiment/02_probe").rglob("*.raw.h5"))), 24)
+            metrics = list((path / "pre_experiment/02_probe").rglob("probe_metrics.json"))
+            self.assertEqual(len(metrics), 24)
+            for metric in metrics:
+                row = json.loads(metric.read_text())
+                self.assertEqual(row["routing_mode"], "single_connect")
+                self.assertIsInstance(row["stimulation_unit"], int)
+                routing = json.loads((metric.parent / "routing.json").read_text())
+                self.assertEqual(len(routing["pool"]), 1)
             self.assertTrue((path / "pre_experiment/selected_formal_sites.yaml").is_file())
             self.assertFalse((path / "raw_data").exists())
             state = json.loads((path / "pre_experiment/workflow_state.json").read_text())
@@ -259,6 +270,24 @@ class SoftwareChecks(unittest.TestCase):
                 runner.run()
             runner.formal.assert_not_called()
             backend.shutdown.assert_called_once()
+
+    def test_multi_electrode_pool_still_rejects_shared_stimulation_unit(self):
+        backend = MaxLabBackend(self.system, Reporter())
+        backend.mx, backend.array = MagicMock(), MagicMock()
+        backend.mx.send.return_value = "Ok"
+        backend.array.load_config.return_value = "Ok"
+        backend.cfg = Path("unused_mock.cfg")
+        backend.mapping = [dict(electrode=11), dict(electrode=12)]
+        links = {}
+        def connect(electrode):
+            links[electrode] = 0
+            return "Ok"
+        backend.array.query_stimulation_at_electrode.side_effect = lambda e: str(links[e]) if e in links else ""
+        backend.array.connect_electrode_to_stimulation.side_effect = connect
+        with self.assertRaisesRegex(RuntimeError, "电极11与12共用stim unit 0"):
+            backend.route([11, 12])
+        backend.array.download.assert_not_called()
+        backend.mx.Sequence.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -53,7 +53,7 @@ spatiotemporal_20261010/
 | 候选中心 | `manual_inputs.candidate_centers: []`，填写5–6个电极ID |
 | 中心距离 | 微米坐标欧氏距离严格>3×17.5µm |
 | unit | 中心+当前CFG中物理最近的3个电极；重复、重叠和不可路由情况报错 |
-| Probe | 每unit的4个单电极各10次、2Hz、400mV、单相300µs、先负后正 |
+| Probe | 每unit的4个单电极各10次、2Hz、400mV、单相300µs、先负后正；每次只连接当前电极 |
 | Probe响应 | [10,50)ms population spike count，与去burst的同宽40ms背景窗口分布比较 |
 | Probe有效性 | 响应成功比例严格>0.60；10次至少7次。伪迹QC默认参与有效trial判定 |
 | 正式选点 | 合格unit的有效电极数量优先，其次响应概率；选3unit×2电极 |
@@ -62,7 +62,7 @@ spatiotemporal_20261010/
 | dt | 1、5、10、20、50、100、500、1000ms，均为第一与第二脉冲起始边沿差 |
 | 休息 | 单电极、同步及每个dt阶段后各300s；期间断开active，继续录制 |
 | 前后自发 | 正式刺激前600s，最后休息后再600s |
-| 刺激池 | pool_fast；每trial仅修改上一组/当前组，禁止每trial整池重配 |
+| 刺激路由 | Probe用single_connect，每个位点整段10次后再换路由；正式实验用pool_fast，每trial仅修改上一组/当前组 |
 | 两个刺激单元 | 必须不同；DAC0/1分担，同步用 `DAC(3, code0, code1)` |
 | 脉冲 | 查询真实LSB；512+bits负相→512−bits正相→512中性 |
 | 图示 | 英文文字、白底无网格、600dpi自动PNG+PDF+SVG；空间图100µm比例尺 |
@@ -116,6 +116,8 @@ python -B main.py --mode hardware --gui --probe-only
 此命令只打开配置窗口；填写现场输入并点击“开始Probe”后才执行硬件操作。保持“仅运行 Probe（完成后停止）”勾选：按原方案完成基线准备、全部候选位点Probe和有效位点筛选，然后关闭文件、断开刺激连接并停止；不生成正式实验的刺激或前/后自发录制。结果状态为`PROBE_COMPLETE`，`experiment_result.json`中的`formal_trial_count`为0。GUI本次选择、命令行模式和配置快照均记录`execution_scope: probe_only`。
 
 无GUI时，可在填写配置后使用`--mode hardware --enable-hardware --headless --probe-only`。`--dry-run --probe-only`只生成Probe计划；`--mode mock --headless --quick --probe-only`可模拟检查。未指定该选项，或在GUI取消勾选时，仍按完整流程在Probe通过后自动进入正式实验。仅Probe模式没有实现从旧结果恢复正式实验；后续完整运行会重新执行Probe。合格unit不足时保存已有位点结果并停止，不放宽门槛。
+
+Probe逐位点使用`single_connect`：保留中心及原来的三个最近记录邻居，每次仅将当前一个电极连接到刺激单元，完成其10次刺激、关闭记录并断开后，再路由下一个电极；同一段内不重路由。避免把四个邻近位点同时接入时发生共享刺激单元冲突。每个attempt的`routing.json`及`probe_metrics.json`、汇总CSV保存实际刺激单元编号；不同单电极段可以先后使用同一编号。记录映射仍必须与原CFG完全一致。Probe响应合格不等于正式多电极池可用，正式实验的六个位点仍须通过独立刺激单元检查；冲突时报告具体电极及unit编号并停止，不自动替换邻居或取消检查。
 
 可选C++监视配置：
 
@@ -209,8 +211,8 @@ run_dir/
     candidate_sites.csv
     candidate_units.{png,pdf,svg}
     02_probe/candidate_XX/
-      routing.json
       ele_ID_attempt_XX/
+        routing.json
         *.raw.h5
         stim_times.txt
         stim_events.csv
