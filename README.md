@@ -266,6 +266,8 @@ Probe最后一次刺激后保持录制开启，默认等待1.0秒，随后才调
 
 当前CFG的四电极池共用刺激单元时，可先执行`python -B scripts/prepare_probe_routing.py`尝试生成独立候选CFG。此命令使用唯一token的临时SDK Array，仅做服务器软件路由：选择原记录电极、提高原24个候选位点优先级、另存`data/<时间>_routing/candidate_probe.cfg`，再逐unit连接/查询刺激单元。不会初始化设备、下载CFG到芯片、操作DAC、创建Sequence或采集H5；原CFG、YAML和其他实验不修改。不保证路由成功，不自动替换中心及邻居。日志只有6个unit的结果及映射变化数量，详细列表在同目录`routing_preparation.json`。状态`routing_unavailable`表示少于3个unit软件可独立路由；`mapping_review_required`表示原记录映射或最近邻unit改变，不能把旧基线直接用于该候选配置；`candidate_for_hardware_routing_check`仅表示原映射/邻居保留且至少3个unit的软件查询通过，仍需单独进行零刺激硬件路由检查后才能启动Probe。命令结束会删除临时软件Array，候选CFG仅存文件，当前芯片路由保持原样。
 
+完成Probe但未达到有效位点要求时，可运行`python -B scripts/inspect_probe_results.py --run data/<本次结果目录>`，只读检查背景参数、末次计数为零的位点数量、6个示例电极的刺激前/后40ms逐次计数与末次raw/spike时间，核对H5实际spike_threshold及保存指标。通过`--electrodes ID1 ID2 ...`选择其他位点。脚本不读取raw电压、不连接设备、不修改源文件或筛选规则；刺激伪迹仍须按需要检查保存的原始波形。末次spike晚于50ms不是数据完整性的充分证明，晚于刺激仅几ms也不是缺失的单独证明。
+
 只读核对已有run的录制设置，不读取raw或spikes，不连接设备：
 
 ```bash
