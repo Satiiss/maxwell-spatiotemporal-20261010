@@ -5,6 +5,7 @@ import argparse
 import importlib
 import importlib.metadata
 import logging
+import math
 import os
 import platform
 from pathlib import Path
@@ -67,6 +68,14 @@ def create_run(system):
 def validate(system, stimulation, hardware=False, probe_only=False):
     from python.schedule import Condition, waveform_commands, next_onset_interval, pulse_duration_sec
     p = stimulation["protocol"]
+    if stimulation["probe"].get("order", "sequential") not in ("sequential", "unit_interleaved"):
+        raise ValueError("probe.order只能为sequential或unit_interleaved")
+    if stimulation["probe"].get("order") == "unit_interleaved" and not math.isclose(
+            float(stimulation["probe"]["frequency_hz"]), 2.0):
+        raise ValueError("已确认的交替Probe要求全局2Hz，即每0.5秒刺激下一位点")
+    tail = float(stimulation["probe"].get("recording_tail_sec", 1.0))
+    if probe_only and (not math.isfinite(tail) or tail < .5):
+        raise ValueError("probe.recording_tail_sec必须至少0.5秒；停止录制前需要保留spike处理时间")
     if (not 1 <= stimulation["probe"]["trials_per_electrode"] or
             (not probe_only and not 1 <= stimulation["formal"]["trials_per_condition"])):
         raise ValueError("trial数必须为正整数")
@@ -124,6 +133,7 @@ def make_plan(system, stimulation, probe_only=False):
     if probe_only:
         centers = system["manual_inputs"]["candidate_centers"]
         return dict(execution_scope="probe_only", stages=[], formal_trial_count=0,
+                    probe_order=stimulation["probe"].get("order", "sequential"),
                     formal_nominal_duration_sec=0,
                     raw_uncompressed_bytes_at_1024_channels_20khz=0,
                     probe_trial_count=(len(centers) if centers else 6) * 4 * stimulation["probe"]["trials_per_electrode"],
@@ -148,12 +158,18 @@ def make_plan(system, stimulation, probe_only=False):
 
 
 def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quick=False, compile_cpp=False,
-            probe_only=True, formal_from=None):
+            probe_only=True, formal_from=None, routing_check=False, probe_order=None):
     from python.utils.progress import Reporter
     from python.utils.persistence import atomic_json
     import yaml
     import copy
     system, stimulation = copy.deepcopy(system), copy.deepcopy(stimulation)
+    if routing_check and formal_from is not None:
+        raise ValueError("路由检查不能与正式实验同时运行")
+    if probe_order is not None:
+        stimulation["probe"]["order"] = probe_order
+    stimulation["probe"].setdefault("order", "sequential")
+    stimulation["probe"].setdefault("recording_tail_sec", 1.0)
     if formal_from is not None:
         probe_only = False
     elif not probe_only:
@@ -161,7 +177,8 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
     if stimulation["probe"].get("enforce_artifact_qc"):
         logging.warning("按最新Probe要求，伪迹仅作诊断；本次覆盖旧enforce_artifact_qc为false并保存快照")
     stimulation["probe"]["enforce_artifact_qc"] = False
-    system["experiment"]["execution_scope"] = "probe_only" if probe_only else "formal_only"
+    system["experiment"]["execution_scope"] = ("probe_routing_check" if routing_check else
+                                                ("probe_only" if probe_only else "formal_only"))
     handoff = None
     if formal_from is not None:
         from python.probe_handoff import load_probe_handoff
@@ -180,8 +197,12 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
         plan = make_plan(system, stimulation, probe_only=probe_only)
         if formal_from is not None:
             plan.update(execution_scope="formal_only", probe_trial_count=0, source_probe_run=str(Path(formal_from).resolve()))
+        if routing_check:
+            plan.update(execution_scope="probe_routing_check", probe_trial_count=0, stimulation_sent=False)
         atomic_json(run_dir / "experiment_plan.json", plan)
-        if probe_only:
+        if routing_check:
+            logging.info("run=%s | 仅检查原候选unit的四位点独立路由；不发送刺激、不采集H5", run_dir)
+        elif probe_only:
             logging.info("run=%s | 仅运行Probe，完成后停止；不会进入正式实验", run_dir)
         else:
             logging.info("run=%s | 正式trial=%d | 名义时长=%.1fmin | raw未压缩估计=%.1fGB",
@@ -207,7 +228,7 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
             backend = MockBackend(system, reporter)
         from python.experiment_runner import ExperimentRunner
         runner = ExperimentRunner(system, stimulation, run_dir, backend, reporter,
-                                  probe_only=probe_only, formal_handoff=handoff)
+                                  probe_only=probe_only, formal_handoff=handoff, routing_check=routing_check)
         runner.run()
         return run_dir
     except BaseException as exc:
@@ -232,10 +253,18 @@ def main():
     stage = parser.add_mutually_exclusive_group()
     stage.add_argument("--probe-only", action="store_true", help="仅执行Probe（默认）；完成后停止，待人工审阅")
     stage.add_argument("--formal-from", type=Path, help="独立启动正式实验，读取已审阅的Probe结果目录，不重复Probe")
+    stage.add_argument("--probe-routing-check", action="store_true", help="只检查候选unit能否四位点独立路由，不发送刺激")
+    parser.add_argument("--probe-order", choices=["sequential", "unit_interleaved"],
+                        help="Probe顺序；交替模式为A/B/C/D每0.5秒换一位点，各位点每2秒一次")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         system, stimulation = load_configuration(args.config_dir)
+        if args.probe_order is not None:
+            stimulation["probe"]["order"] = args.probe_order
+        wants_gui = args.gui or (system["gui"]["enabled"] and not args.headless and not args.dry_run)
+        if wants_gui and (args.probe_routing_check or stimulation["probe"].get("order") == "unit_interleaved"):
+            raise ValueError("交替Probe和路由检查请使用--headless终端模式")
         if args.formal_from and (args.gui or (system["gui"]["enabled"] and not args.headless and not args.dry_run)):
             raise ValueError("正式实验请使用--headless --formal-from；GUI仅运行Probe")
         if args.gui or (system["gui"]["enabled"] and not args.headless and not args.dry_run):
@@ -244,7 +273,8 @@ def main():
         if args.mode == "hardware" and not args.enable_hardware and not args.dry_run:
             raise ValueError("真实执行请显式使用 --mode hardware --enable-hardware")
         output = execute(system, stimulation, args.mode, dry_run=args.dry_run, quick=args.quick,
-                         compile_cpp=args.build_cpp, probe_only=args.formal_from is None, formal_from=args.formal_from)
+                         compile_cpp=args.build_cpp, probe_only=args.formal_from is None, formal_from=args.formal_from,
+                         routing_check=args.probe_routing_check, probe_order=args.probe_order)
         print(f"运行结果目录: {output.resolve()}")
         return 0
     except KeyboardInterrupt:

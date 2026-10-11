@@ -24,6 +24,10 @@ class ElectrodeUnroutable(RuntimeError):
         super().__init__(f"电极{electrode}连接后刺激单元查询为空；当前CFG下未分配刺激单元")
 
 
+class StimPoolConflict(RuntimeError):
+    """Two electrodes in a requested fixed pool share a stimulation unit."""
+
+
 class MaxLabBackend:
     realtime = True
 
@@ -84,7 +88,7 @@ class MaxLabBackend:
             unit = int(text)
             if unit in pool.values():
                 previous = next(e for e, assigned in pool.items() if assigned == unit)
-                raise RuntimeError(f"电极{previous}与{electrode}共用stim unit {unit}；"
+                raise StimPoolConflict(f"电极{previous}与{electrode}共用stim unit {unit}；"
                                    "当前多电极池无法独立切换，停止实验")
             pool[electrode] = unit
             self.all_units.add(unit)

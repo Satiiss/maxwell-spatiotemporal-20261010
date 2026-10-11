@@ -50,6 +50,18 @@ class HandoffChecks(unittest.TestCase):
         self.assertEqual(len({e for u in units for e in u["electrodes"]}), 6)
         self.assertEqual(reference["source_probe_trial_count"], 240)
 
+    def test_changed_spike_detection_or_probe_order_is_rejected(self):
+        for key, value in (("event_threshold", 5.5), ("amplifier_gain", 256)):
+            with self.subTest(key=key):
+                changed = copy.deepcopy(self.system)
+                changed["maxwell"][key] = value
+                with self.assertRaisesRegex(ValueError, "spike检测阈值或gain"):
+                    load_probe_handoff(self.source, changed, self.stimulation)
+        changed = copy.deepcopy(self.stimulation)
+        changed["probe"]["order"] = "unit_interleaved"
+        with self.assertRaisesRegex(ValueError, "顺序"):
+            load_probe_handoff(self.source, self.system, changed)
+
     def test_incomplete_probe_and_synthetic_hardware_inputs_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "模拟Probe"):
             load_probe_handoff(self.source, self.system, self.stimulation, hardware=True)

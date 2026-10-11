@@ -214,6 +214,13 @@ class SoftwareChecks(unittest.TestCase):
             backend = MockBackend(self.system, reporter)
             backend.route = MagicMock(wraps=backend.route)
             backend.shutdown = MagicMock(wraps=backend.shutdown)
+            finish = backend.finish_segment
+            def delayed_finish():
+                # Emulate a processor whose spikes arrive 150ms after their frame.
+                cutoff = backend.clock - backend.record_start - .150
+                backend.spikes = [s for s in backend.spikes if s[0] <= cutoff]
+                return finish()
+            backend.finish_segment = MagicMock(side_effect=delayed_finish)
             runner = ExperimentRunner(self.system, self.stimulation, directory, backend, reporter, probe_only=True)
             with patch("python.experiment_runner.unit_map"), patch("python.experiment_runner.raster"), \
                     patch("python.experiment_runner.summary_table"), patch.object(runner, "formal") as formal:
@@ -240,12 +247,32 @@ class SoftwareChecks(unittest.TestCase):
                 self.assertIsInstance(row["stimulation_unit"], int)
                 routing = json.loads((metric.parent / "routing.json").read_text())
                 self.assertEqual(len(routing["pool"]), 1)
+                self.assertEqual(row["recording_tail_sec"], 1.0)
+                session = read_session(row["h5"])
+                last_onset = max(e["time_sec"] for e in session.events)
+                self.assertGreaterEqual(session.duration_sec - last_onset, .995 - .0001)
+                self.assertTrue(any(session.times > last_onset + .01))
+                from csv import DictReader
+                with (metric.parent / "trial_metrics.csv").open(encoding="utf-8-sig", newline="") as handle:
+                    last_trial = list(DictReader(handle))[-1]
+                self.assertEqual(last_trial["trial"], "10")
+                self.assertEqual(last_trial["response_success"].lower(), "true")
             self.assertTrue((path / "pre_experiment/selected_formal_sites.yaml").is_file())
             self.assertFalse((path / "raw_data").exists())
             state = json.loads((path / "pre_experiment/workflow_state.json").read_text())
             self.assertEqual(state["stage"], "PROBE_COMPLETE")
             self.assertFalse(runner.stimulation["probe"]["enforce_artifact_qc"])
             self.assertTrue(self.stimulation["probe"]["enforce_artifact_qc"])
+
+    def test_probe_tail_is_validated_before_hardware_initialization(self):
+        for tail in (.1, 0, -1, float("nan"), float("inf")):
+            with self.subTest(tail=tail):
+                self.stimulation["probe"]["recording_tail_sec"] = tail
+                with self.assertRaisesRegex(ValueError, "recording_tail_sec"):
+                    validate(self.system, self.stimulation, probe_only=True)
+        for tail in (.5, 1.0):
+            self.stimulation["probe"]["recording_tail_sec"] = tail
+            validate(self.system, self.stimulation, probe_only=True)
 
     def test_formal_run_uses_handoff_and_never_repeats_probe(self):
         with tempfile.TemporaryDirectory(dir=ROOT / "data") as directory:

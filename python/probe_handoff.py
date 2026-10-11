@@ -25,6 +25,11 @@ def load_probe_handoff(source, system, stimulation, hardware=False):
         raise ValueError("当前培养物编号与Probe培养物不一致")
     if any(source_system["maxwell"][k] != system["maxwell"][k] for k in ("device", "well")):
         raise ValueError("当前设备类型或well与Probe不一致")
+    if any(source_system["maxwell"][k] != system["maxwell"][k]
+           for k in ("event_threshold", "amplifier_gain")):
+        raise ValueError("当前spike检测阈值或gain与Probe不一致")
+    if source_stim["probe"].get("order", "sequential") != stimulation["probe"].get("order", "sequential"):
+        raise ValueError("当前Probe交替/逐位点顺序与源结果不一致")
     if source_stim["probe"].get("enforce_artifact_qc", False):
         raise ValueError("源Probe采用旧的伪迹硬门槛，请按最新响应定义重新评估后再进行正式实验")
     for key in ("threshold_rule", "response_window_ms", "baseline_window_ms", "trials_per_electrode",

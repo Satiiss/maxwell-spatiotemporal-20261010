@@ -38,6 +38,7 @@ spatiotemporal_20261010/
   cpp/CMakeLists.txt
   cpp/src/spike_monitor.cpp
   scripts/build_cpp.sh
+  scripts/inspect_recording_settings.py # 只读核对基线/Probe元数据
   tests/test_experiment.py
   data/{YYYYMMDD_HHMMSS}_data/
 ```
@@ -256,6 +257,40 @@ run_dir/
 每次main创建全新的时间目录；相同秒目录已存在时明确报错。逐trial命令记录立即写journal并fsync；每段刺激结束立即导出段内表。失败保留journal及失败状态，停止刺激、先stop_recording、等待写盘、再stop_file，断开并关闭stim unit、DAC回中性。若硬件收尾失败单独记录cleanup_failure.json。不会自动向不完整H5尾部续写，也不会自动绕过失败阶段开始正式刺激。
 
 Probe逐位点路由时，如果SDK确认connect成功而刺激单元查询为空，该位点保存为`status=unroutable`、`all_trials=0`、`eligible=false`；没有发送刺激，也没有该位点的H5，响应及伪迹指标为null（图表显示N/A）。随后继续原四电极unit中其余候选，不替换邻居。unit报告区分原候选、实际测试和不可路由电极，仍要求至少3个unit各有2个有效位点。SDK错误回复、非法单元编号、映射变化及正式多电极路由失败继续停止。旧版中途失败的run保留已完成数据；更新代码后重新启动会建立新run并从头Probe，不应把重新启动当作断点续测。
+
+Probe最后一次刺激后保持录制开启，默认等待1.0秒，随后才调用stop_recording；停止录制后的写盘等待仍独立执行。现场旧版100ms尾部出现raw有约90–100ms覆盖但最后spike仅到刺激后约3–7ms的现象，延迟处理/保存是待验证原因。可在stimulation.yaml的probe下设置`recording_tail_sec`（至少0.5秒），旧配置缺省时自动使用1.0秒并记入快照及位点指标，不修改原YAML。延长等待不能补回旧文件缺失的spikes，必须现场确认末次响应窗口的spike记录。
+
+`maxwell.event_threshold`是SDK在线spike检测阈值，单位为相对于均值的标准差倍数，不是Probe有效响应阈值；模板8.5未经本culture标定。手动基线及Probe的spike计数比较前，需要核对H5 settings中的spike_threshold、gain、hpf、sampling是否一致。其他实验的5.5不能直接照搬，也不能仅改变Probe检测阈值而继续使用检测设置不同的旧基线。记录采样率从H5读取；Sequence的50µs命令步长是独立概念，不用其他项目的sample_us字段覆盖设备采样率。
+
+只读核对已有run的录制设置，不读取raw或spikes，不连接设备：
+
+```bash
+python -B scripts/inspect_recording_settings.py --run data/20261011_133020_data
+```
+
+## 可选的unit内交替Probe
+
+按用户2026-10-11确认，`--probe-order unit_interleaved`采用每0.5秒一个单电极脉冲，A→B→C→D循环10轮，每个位点10次。2Hz指全局发刺激频率；每个位点间隔2秒，实际为0.5Hz。默认仍为sequential逐位点10次；这是明确的新Probe节奏，不宣称每个位点保持原2Hz。400mV、每相300µs、先负后正、10–50ms全阵列响应、同宽去burst背景和严格7/10判定保持不变。
+
+先运行以下路由检查。它加载原CFG并检查所有原四电极unit，准备的stim unit保持断开；不创建或下发Sequence，不记录H5：
+
+```bash
+python -B main.py --mode hardware --enable-hardware --headless \
+  --probe-routing-check --probe-order unit_interleaved
+```
+
+查看新run的`pre_experiment/probe_routing_summary.csv`或json。四个位点必须获得互不相同的刺激单元，记录映射必须保持不变。共享单元/明确空查询保留为无法交替，不替换原邻居；通信错误或映射变化仍停止。少于3个unit能独立交替时不会开始这批Probe。旧SDK的download及MaxOne offset各需要5秒等待，因此无法靠每0.5秒重新download单电极CFG维持此交替节奏；必须在固定四电极池内快切。
+
+完成录制设置和路由复核后，真实交替Probe独立启动：
+
+```bash
+python -B main.py --mode hardware --enable-hardware --headless \
+  --probe-only --probe-order unit_interleaved
+```
+
+第一发刺激前再次检查全部unit路由。每个可路由unit保存一份40次交替刺激的H5；`trial_manifest.csv`记录电极、轮次和H5事件时间，独立的`ele_ID_metrics/trial_metrics.csv`每份10次，路径写入`probe_summary.csv`的`trial_metrics_path`。不可测试unit保持原候选列表，标记not_tested。每个unit最后一发后继续录制默认1秒，再正常关闭H5。不会自动开始正式实验，也不会从旧失败run续写。
+
+交替Probe结果如果经过人工复核满足正式标准，后续独立正式命令同样需带`--probe-order unit_interleaved --formal-from <已复核Probe目录>`，以校验Probe定义一致；还会核对检测阈值和gain。真实可路由性、快切延迟和末次spike完整性需要现场确认，软件模拟不能代替。
 
 完整raw记录很大：默认after_second调度下，正式阶段名义约176.9min；1024通道、20kHz、uint16未压缩估算约435GB，实际取决于映射通道数、压缩和路由/构建耗时。请配置足够空间的数据盘。保留raw是为了后续第一脉冲污染与同步伪迹排查。
 

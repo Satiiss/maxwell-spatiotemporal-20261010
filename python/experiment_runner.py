@@ -20,17 +20,25 @@ from .utils.time_log import ExternalTimeLog, SegmentStimLog
 from .utils.progress import ExperimentStopped
 from .figures import unit_map, raster, summary_table
 from .maxwell_setup import ElectrodeUnroutable
+from .interleaved_probe import check_probe_pools, run_interleaved_probe
 
 
 class ExperimentRunner:
-    def __init__(self, system, stimulation, run_dir, backend, reporter, probe_only=True, formal_handoff=None):
+    def __init__(self, system, stimulation, run_dir, backend, reporter, probe_only=True, formal_handoff=None,
+                 routing_check=False):
         if not probe_only and formal_handoff is None:
             raise ValueError("禁止自动衔接正式实验；请独立加载已审阅的Probe结果")
         self.system, self.stimulation = copy.deepcopy(system), copy.deepcopy(stimulation)
         self.probe_only = probe_only
         self.formal_handoff = formal_handoff
+        self.routing_check = routing_check
+        if routing_check and not probe_only:
+            raise ValueError("路由检查不能启动正式实验")
         self.stimulation["probe"]["enforce_artifact_qc"] = False
-        self.system["experiment"]["execution_scope"] = "probe_only" if probe_only else "formal_only"
+        self.stimulation["probe"].setdefault("recording_tail_sec", 1.0)
+        self.stimulation["probe"].setdefault("order", "sequential")
+        self.execution_scope = "probe_routing_check" if routing_check else ("probe_only" if probe_only else "formal_only")
+        self.system["experiment"]["execution_scope"] = self.execution_scope
         self.run_dir, self.backend, self.reporter = Path(run_dir), backend, reporter
         self.current_log = None
         self.completed_segments = []
@@ -43,7 +51,7 @@ class ExperimentRunner:
 
     def state(self, stage, **details):
         state = dict(stage=stage, updated_utc=utc_now(), run_dir=str(self.run_dir),
-                    execution_scope="probe_only" if self.probe_only else "formal_only",
+                    execution_scope=self.execution_scope,
                     completed_segments=self.completed_segments, completed_trials=self.completed_trials,
                     selected_formal_units=getattr(self, "formal_units", []))
         state.update(details)
@@ -191,7 +199,8 @@ class ExperimentRunner:
                    send_epoch_sec=epoch, estimated_onsets_sec=onsets,
                    amplitude_mv=protocol["amplitude_mv"], pulse_width_us=protocol["pulse_width_us"],
                    polarity=protocol["polarity"],
-                   routing_mode="single_connect" if condition.kind == "probe" else self.system["routing"]["mode"],
+                   routing_mode=("unit_pool_fast" if self.stimulation["probe"]["order"] == "unit_interleaved"
+                                 else "single_connect") if condition.kind == "probe" else self.system["routing"]["mode"],
                    interval_sec=interval_sec, response_anchor="second" if condition.kind == "temporal" else "first")
         self.current_log.add_trial(row)
         self.audit.add("stim_send", epoch_sec=epoch, block=self.current_log.block, phase=self.current_log.phase,
@@ -212,6 +221,8 @@ class ExperimentRunner:
         return onset_monotonic + interval_sec
 
     def probes(self):
+        if self.stimulation["probe"]["order"] == "unit_interleaved":
+            return self.finish_probe_selection(run_interleaved_probe(self))
         pre = self.run_dir / "pre_experiment"
         cfg = self.stimulation["probe"]
         rounds = cfg["trials_per_electrode"]
@@ -268,9 +279,12 @@ class ExperimentRunner:
                         deadline = self.one_trial(condition, trial, 1 / cfg["frequency_hz"], trial, rounds,
                                                   "单电极Probe", deadline)
                     actual_count = len(self.current_log.rows)
-                    self.reporter.wait(.1, "Probe尾部录制", realtime=self.backend.realtime)
+                    # Keep recording active while delayed spike processing catches up.
+                    # Waiting after stop_recording cannot collect this missing tail.
+                    tail = float(cfg["recording_tail_sec"])
+                    self.reporter.wait(tail, "Probe尾部录制（保持采集开启）", realtime=self.backend.realtime)
                     if not self.backend.realtime:
-                        self.backend.advance(.1)
+                        self.backend.advance(tail)
                     session, manifest = self.finish_segment(actual_count)
                     times = [r["onsets_sec"][0] for r in manifest]
                     raster(session, times, directory / "raster")
@@ -282,7 +296,8 @@ class ExperimentRunner:
                             artifact_0_2ms_mean=0.0, response_10_50ms_mean=0.0, response_10_50ms_total=0)
                     summary.update(unit_id=unit["unit_id"], electrode=electrode, center=unit["center"],
                                    stimulation_unit=pool[electrode], routing_mode="single_connect",
-                                   h5=str(session.path), attempt=attempt, status=action or "complete")
+                                   h5=str(session.path), attempt=attempt, status=action or "complete",
+                                   recording_tail_sec=tail)
                     summary["eligible"] = bool(summary["eligible"] and actual_count == rounds and not action)
                     write_csv(directory / "trial_metrics.csv", trials,
                               list(trials[0]) if trials else ["trial", "success"])
@@ -295,6 +310,11 @@ class ExperimentRunner:
                     break
                 self.backend.disconnect_active() if self.backend.realtime else self.backend.switch(())
                 self.reporter.wait(cfg["inter_electrode_pause_sec"], "Probe位点间等待", realtime=self.backend.realtime)
+        return self.finish_probe_selection(site_summaries)
+
+    def finish_probe_selection(self, site_summaries):
+        pre = self.run_dir / "pre_experiment"
+        cfg = self.stimulation["probe"]
         summary_table(site_summaries, pre / "probe_summary")
         unit_reports = []
         for unit in self.units:
@@ -305,6 +325,7 @@ class ExperimentRunner:
                 candidate_electrodes=unit["electrodes"],
                 tested_electrodes=[r["electrode"] for r in rows if r["all_trials"] > 0],
                 unroutable_electrodes=[r["electrode"] for r in rows if r["status"] == "unroutable"],
+                untested_electrodes=[r["electrode"] for r in rows if r["all_trials"] == 0],
                 valid_electrode_count=len(valid),
                 valid_electrodes=[r["electrode"] for r in valid], valid_site_metrics=valid,
                 enough_for_formal=len(valid) >= 2))
@@ -373,7 +394,14 @@ class ExperimentRunner:
         self.state("INITIALIZE")
         try:
             self.initialize()
-            if self.probe_only:
+            if self.routing_check:
+                reports = check_probe_pools(self)
+                self.result = dict(status="probe_routing_check_complete", execution_scope="probe_routing_check",
+                    synthetic=not self.backend.realtime, formal_started=False, formal_trial_count=0,
+                    probe_trial_count=0, stimulation_sent=False, requires_manual_review=True,
+                    routable_unit_count=sum(r["can_interleave"] for r in reports),
+                    routing_summary=reports, completed_utc=utc_now())
+            elif self.probe_only:
                 self.prepare_baseline()
                 self.probes()
                 self.result = dict(status="probe_complete" if self.probe_ready else "probe_review_required", execution_scope="probe_only",
@@ -418,5 +446,6 @@ class ExperimentRunner:
             finally:
                 self.audit.add("experiment_end")
                 self.audit.close()
-        self.state(("PROBE_COMPLETE" if self.probe_ready else "PROBE_REVIEW_REQUIRED") if self.probe_only else "COMPLETE")
+        self.state("ROUTING_CHECK_COMPLETE" if self.routing_check else
+                   (("PROBE_COMPLETE" if self.probe_ready else "PROBE_REVIEW_REQUIRED") if self.probe_only else "COMPLETE"))
         atomic_json(self.run_dir / "experiment_result.json", self.result)
