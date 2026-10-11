@@ -264,6 +264,8 @@ Probe最后一次刺激后保持录制开启，默认等待1.0秒，随后才调
 
 真实Probe使用已有基线时，启动前只读核对基线H5的单一`spike_threshold`与`gain`，要求分别等于当前`maxwell.event_threshold`与`amplifier_gain`；缺失、非单一值或不一致时，在初始化设备之前停止。零刺激路由检查不使用响应基线，因此不执行这项检查。现场28878基线元数据为5.0、旧Probe为8.5，其余已核对的采集参数一致；沿用该基线时应将本机`config/system.yaml`的`maxwell.event_threshold`改为5.0。旧Probe的有效性不能沿用，改变YAML不会改变旧H5内已保存的spikes；是否重测须先解决路由及尾部记录问题。
 
+当前CFG的四电极池共用刺激单元时，可先执行`python -B scripts/prepare_probe_routing.py`尝试生成独立候选CFG。此命令使用唯一token的临时SDK Array，仅做服务器软件路由：选择原记录电极、提高原24个候选位点优先级、另存`data/<时间>_routing/candidate_probe.cfg`，再逐unit连接/查询刺激单元。不会初始化设备、下载CFG到芯片、操作DAC、创建Sequence或采集H5；原CFG、YAML和其他实验不修改。不保证路由成功，不自动替换中心及邻居。日志只有6个unit的结果及映射变化数量，详细列表在同目录`routing_preparation.json`。状态`routing_unavailable`表示少于3个unit软件可独立路由；`mapping_review_required`表示原记录映射或最近邻unit改变，不能把旧基线直接用于该候选配置；`candidate_for_hardware_routing_check`仅表示原映射/邻居保留且至少3个unit的软件查询通过，仍需单独进行零刺激硬件路由检查后才能启动Probe。命令结束会删除临时软件Array，候选CFG仅存文件，当前芯片路由保持原样。
+
 只读核对已有run的录制设置，不读取raw或spikes，不连接设备：
 
 ```bash
