@@ -75,8 +75,31 @@ def mark_unrecorded(ax, session, onset, window_ms, trial_id=None):
                                 color='#D8DEE9', alpha=.8, hatch='///', lw=0)
 
 
+def electrode_rows(mapping):
+    ordered = sorted(mapping, key=lambda row: row['electrode'])
+    if not ordered or len({r['electrode'] for r in ordered}) != len(ordered) or len({r['channel'] for r in ordered}) != len(ordered):
+        raise ValueError('H5电极映射为空或包含重复电极/通道，不能建立电极行')
+    return [dict(row_index=i+1, electrode=int(r['electrode']), channel=int(r['channel']))
+            for i, r in enumerate(ordered)]
+
+
+def electrode_axis(ax, rows):
+    # Uniform rows for all recorded electrodes; ticks show actual electrode IDs.
+    indices = np.unique(np.linspace(0, len(rows)-1, min(7, len(rows)), dtype=int))
+    ax.set_yticks([rows[i]['row_index'] for i in indices])
+    ax.set_yticklabels([str(rows[i]['electrode']) for i in indices])
+    ax.set(ylabel='Recording electrode ID', ylim=(.5, len(rows)+.5))
+
+
 def plot_site(session, times, trial_ids, directory, window_ms, progress):
     configure()
+    rows = electrode_rows(session.mapping)
+    channel_rows = {r['channel']: r['row_index'] for r in rows}
+    def plot_electrodes(ax, onset, window):
+        x, channels = local_spikes(session, onset, window)
+        y = np.asarray([channel_rows[int(channel)] for channel in channels])
+        ax.plot(x, y, linestyle='None', marker='|', markersize=1.5,
+                markeredgewidth=.25, color='#303C43')
     windows = [tuple(window_ms), (-5., 10.)]
     for window, name in zip(windows, ['aligned_trials', 'artifact_zoom']):
         fig, ax = plt.subplots(figsize=(3.5, 2.3))
@@ -90,6 +113,16 @@ def plot_site(session, times, trial_ids, directory, window_ms, progress):
         ax.set_yticks(trial_ids)
         save(fig, directory / name)
         progress(name)
+    for window, name in zip(windows, ['aligned_electrodes', 'electrode_artifact_zoom']):
+        fig, ax = plt.subplots(figsize=(3.5, 2.8))
+        for onset in times:
+            plot_electrodes(ax, onset, window)
+        decorate(ax, window)
+        electrode_axis(ax, rows)
+        ax.text(.98, .98, f'{len(times)} trials pooled', transform=ax.transAxes,
+                ha='right', va='top', fontsize=5, color='#303C43')
+        save(fig, directory / name)
+        progress(name)
     channel_ids = [r['channel'] for r in session.mapping]
     for onset, trial_id in zip(times, trial_ids):
         fig, ax = plt.subplots(figsize=(3.5, 2.8))
@@ -101,6 +134,13 @@ def plot_site(session, times, trial_ids, directory, window_ms, progress):
         ax.set(ylabel='Recording channel', ylim=(min(channel_ids) - .5, max(channel_ids) + .5))
         save(fig, directory / f'trial_{trial_id:02d}_raster')
         progress(f'trial_{trial_id:02d}_raster')
+        fig, ax = plt.subplots(figsize=(3.5, 2.8))
+        plot_electrodes(ax, onset, window_ms)
+        decorate(ax, window_ms)
+        mark_unrecorded(ax, session, onset, window_ms)
+        electrode_axis(ax, rows)
+        save(fig, directory / f'trial_{trial_id:02d}_electrodes')
+        progress(f'trial_{trial_id:02d}_electrodes')
     edges, counts, exposure, rate = pooled_psth(session, times, window_ms)
     for name, omit in [('psth', False), ('psth_after_3ms', True)]:
         plotted = rate.copy()

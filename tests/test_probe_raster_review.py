@@ -11,12 +11,21 @@ import h5py
 import numpy as np
 import yaml
 
-from tools.probe_raster_review import align_saved_events, local_spikes, pooled_psth
+from tools.probe_raster_review import align_saved_events, electrode_rows, local_spikes, pooled_psth
 from python.utils.persistence import sha256, write_csv
 from tools.plot_probe_rasters import plot_run
 
 
 class ProbeRasterChecks(unittest.TestCase):
+    def test_electrode_rows_include_silent_sites_and_use_actual_ids(self):
+        mapping = [dict(channel=914,electrode=23209), dict(channel=7,electrode=5193),
+                   dict(channel=100,electrode=13953)]
+        rows = electrode_rows(mapping)
+        self.assertEqual(rows, [dict(row_index=1,electrode=5193,channel=7),
+                                dict(row_index=2,electrode=13953,channel=100),
+                                dict(row_index=3,electrode=23209,channel=914)])
+        with self.assertRaises(ValueError):
+            electrode_rows(mapping+[dict(channel=1,electrode=23209)])
     def test_actual_event_required(self):
         event = dict(event_id=1, time_sec=.25, eventmessage='probe')
         session = SimpleNamespace(events=[event], sampling_hz=20000, duration_sec=1.)
@@ -81,11 +90,15 @@ class ProbeRasterChecks(unittest.TestCase):
             with patch('tools.plot_probe_rasters.ROOT', root), patch.object(h5py.Dataset,'__getitem__',guarded_read), redirect_stdout(io.StringIO()):
                 output=plot_run(run)
             figures=output/'candidate_01/ele_100'
-            for name in ['aligned_trials','artifact_zoom','trial_01_raster','trial_02_raster','psth','psth_after_3ms']:
+            for name in ['aligned_trials','artifact_zoom','aligned_electrodes','electrode_artifact_zoom',
+                         'trial_01_raster','trial_02_raster','trial_01_electrodes','trial_02_electrodes',
+                         'psth','psth_after_3ms']:
                 for suffix in ['png','pdf','svg']:
                     self.assertGreater((figures/f'{name}.{suffix}').stat().st_size,100)
             report=json.loads((output/'analysis_result.json').read_text(encoding='utf-8'))
             self.assertTrue(report['source_files_unchanged'])
+            self.assertEqual(report['sites'][0]['recorded_electrodes'],2)
+            self.assertTrue((figures/'electrode_rows.csv').exists())
             self.assertEqual(report['skipped'][0]['status'],'unroutable')
             self.assertFalse((output/'experiment_result.json').exists())
             self.assertEqual(hashes,{p:sha256(p) for p in run.rglob('*') if p.is_file()})

@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from analysis.utils.io import read_session
 from analysis.utils.probe import count_windows
-from tools.probe_raster_review import align_saved_events, plot_site
+from tools.probe_raster_review import align_saved_events, electrode_rows, plot_site
 from python.utils.persistence import atomic_json, sha256, utc_now, write_csv
 from tools.inspect_probe_results import read_trials
 
@@ -79,7 +79,7 @@ def plot_run(run, electrodes=None, window_ms=(-10., 50.)):
                 raise ValueError('trial编号重复')
             directory = output / row['unit_id'] / f'ele_{electrode}'
             directory.mkdir(parents=True)
-            total = len(trials) + 4
+            total = 2 * len(trials) + 6
             done = 0
             def progress(name):
                 nonlocal done
@@ -89,6 +89,7 @@ def plot_run(run, electrodes=None, window_ms=(-10., 50.)):
                             '#'*a, '-'*(20-a), index if done == total else index-1, len(completed),
                             electrode, '#'*b, '-'*(20-b), done, total, name)
             psth = plot_site(session, times, trial_ids, directory, window_ms, progress)
+            write_csv(directory/'electrode_rows.csv', electrode_rows(session.mapping))
             write_csv(directory/'psth.csv', psth)
             coverage = [dict(trial=trial_id, stim_time_sec=float(t), event_id=e['event_id'],
                              requested_window_start_ms=window_ms[0], requested_window_end_ms=window_ms[1],
@@ -101,7 +102,9 @@ def plot_run(run, electrodes=None, window_ms=(-10., 50.)):
                         figures_directory=str(directory), original_summary=row,
                         event_times_verified=True, saved_response_counts_verified=True,
                         incomplete_window_trials=[r['trial'] for r in coverage if not r['complete_window']],
-                        formats=['png', 'pdf', 'svg'], figure_count=total)
+                        formats=['png', 'pdf', 'svg'], figure_count=total,
+                        recorded_electrodes=len(session.mapping),
+                        electrode_axis='uniform_rows_sorted_by_electrode_id_including_silent_sites')
             atomic_json(directory/'source.json', item)
             if (h5.stat().st_size, h5.stat().st_mtime_ns) != (stat.st_size, stat.st_mtime_ns):
                 raise ValueError('绘图期间源H5发生变化')

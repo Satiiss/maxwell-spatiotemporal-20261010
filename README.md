@@ -345,9 +345,13 @@ python -B tools/plot_probe_rasters.py --run data/20261011_152853_data --electrod
 每个位点自动保存以下图的PNG（600 dpi）、PDF和SVG；图中文字为英文，无标题或背景网格，PDF/SVG的spike点保留矢量：
 
 - `trial_01_raster`至`trial_10_raster`：逐次刺激局部图，横轴毫秒、纵轴真实记录通道，保留所有有效映射的spike点。
+- `trial_01_electrodes`至`trial_10_electrodes`：逐次刺激的全部记录电极图；按真实electrode ID排序，每行一个电极，包括静默电极。刻度显示部分真实ID，完整行号/ID/channel对应表保存在`electrode_rows.csv`。
+- `aligned_electrodes`：全部trial以0 ms对齐后叠加，纵轴为全部记录电极；不是每个电极的成功率。`electrode_artifact_zoom`单独放大−5至10 ms。
 - `aligned_trials`：每行一次刺激，所有记录通道的spikes合并到该行，比较多次刺激的跟随分布；纵轴不是电极。
 - `artifact_zoom`：同样按trial对齐，单独放大−5至10 ms，保留0–3 ms的检测点。
 - `psth`：全部记录通道汇总、1 ms分箱，按有效观察trial数和箱宽换算群体spikes/s。
 - `psth_after_3ms`：只在这张辅助PSTH中隐藏0–3 ms箱，便于看其他时段；所有栅格图和原始PSTH保留这些检测点。
 
 红线为H5中的刺激时刻（0 ms），浅黄色为0–3 ms，浅蓝色为10–50 ms。录制未覆盖的区间用灰色斜纹标记，PSTH排除未完整录制的箱而不是当作零响应；覆盖情况写入 `trial_alignment.csv`。输出还保存 `psth.csv`、原逐trial指标副本、源文件信息、参数快照及分层进度日志。该命令只绘制已有spikes，不读取连续raw电压；若要确认实际电刺激波形，应另外读取原始电压。可视化不重新评分、不改筛选判据、不自动批准正式实验。
+
+“全部电极”指本次H5实际映射并记录的电极（现场为1020个），不能绘制未记录的芯片电极。电极图的行间距均匀，ID仅作为标签，不表示物理距离。多trial叠加图某段缺失时其他trial仍可能有数据，是否完整观察需查`trial_alignment.csv`；逐trial图会标记未录制范围。

@@ -24,4 +24,6 @@ python -B tools/plot_probe_rasters.py --run data/20261011_152853_data --electrod
 
 绘图默认显示−10至50ms；`--window-ms -50 200`可扩展查看范围，去掉`--electrodes 23209`处理所有已完成位点。毫秒级图保存到新建的 `data/<时间>_probe_raster_review/<unit>/ele_<ID>/`，旧的整段`raster`不覆盖。
 
+纵轴为全部记录电极的图：`aligned_electrodes.pdf`（全部trial叠加）、`electrode_artifact_zoom.pdf`（−5至10ms）和`trial_01_electrodes.pdf`等逐次图。每行一个实际记录电极，按真实electrode ID排序，静默电极保留；刻度只显示部分ID以保持可读，完整对应表为`electrode_rows.csv`。`aligned_trials.pdf`的每行则仍是一次刺激。
+
 `scripts/prepare_probe_routing.py`涉及SDK服务器软件路由，继续放在`scripts/`；实验仍通过根目录的`main.py`启动。目录迁移只更新文件位置、引用和命令，不改变分析公式、刺激配置或数据保存位置。
