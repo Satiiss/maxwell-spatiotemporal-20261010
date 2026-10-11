@@ -322,3 +322,23 @@ python -m unittest discover -s tests -v
 软件检查覆盖调度计数、交叉顺序、两种时序方向、DAC极性、精确dt、严格7/10门槛、unit排名、时间原点及失败门控。模拟运行不导入maxlab、不连接设备，其H5带synthetic属性，没有真实raw电压。
 
 未进行真实刺激、Linux静态库链接、硬件路由/settling现场验收或实验科学结论验证。自发基线的稳定延时Map用于实验前选点，已实现；正式刺激响应中的强响应概率、稳定延时Map、Consistency、ESRC和第一刺激污染验证按用户要求暂缓。
+
+## 从已有 Probe H5 重绘毫秒级栅格图
+
+已有每个位点目录中的 `raster.png/pdf/svg` 展示整段记录。以下只读命令直接从已关闭的 Probe H5 读取 spikes 和实际刺激事件，重绘毫秒级局部图；无需重新刺激：
+
+```bash
+python -B scripts/plot_probe_rasters.py --run data/20261011_152853_data --electrodes 23209
+```
+
+去掉 `--electrodes 23209` 可处理全部已完成位点；不可路由位点记录为跳过。默认横轴为刺激前10 ms至后50 ms，可用 `--window-ms -50 200` 扩展。默认另存到本项目 `data/<时间>_probe_raster_review/<unit>/ele_<ID>/`，原 H5、metrics、配置和整段图不修改。时间原点必须与唯一 H5 事件吻合，且重新计算的10–50 ms计数必须与原metrics一致；不使用墙钟或估算时刻替代。缺事件或不一致时停止并报告。仅存在完成的 `analysis_result.json` 才表示整个绘图任务完成。
+
+每个位点自动保存以下图的PNG（600 dpi）、PDF和SVG；图中文字为英文，无标题或背景网格，PDF/SVG的spike点保留矢量：
+
+- `trial_01_raster`至`trial_10_raster`：逐次刺激局部图，横轴毫秒、纵轴真实记录通道，保留所有有效映射的spike点。
+- `aligned_trials`：每行一次刺激，所有记录通道的spikes合并到该行，比较多次刺激的跟随分布；纵轴不是电极。
+- `artifact_zoom`：同样按trial对齐，单独放大−5至10 ms，保留0–3 ms的检测点。
+- `psth`：全部记录通道汇总、1 ms分箱，按有效观察trial数和箱宽换算群体spikes/s。
+- `psth_after_3ms`：只在这张辅助PSTH中隐藏0–3 ms箱，便于看其他时段；所有栅格图和原始PSTH保留这些检测点。
+
+红线为H5中的刺激时刻（0 ms），浅黄色为0–3 ms，浅蓝色为10–50 ms。录制未覆盖的区间用灰色斜纹标记，PSTH排除未完整录制的箱而不是当作零响应；覆盖情况写入 `trial_alignment.csv`。输出还保存 `psth.csv`、原逐trial指标副本、源文件信息、参数快照及分层进度日志。该命令只绘制已有spikes，不读取连续raw电压；若要确认实际电刺激波形，应另外读取原始电压。可视化不重新评分、不改筛选判据、不自动批准正式实验。
