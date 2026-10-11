@@ -42,6 +42,7 @@ class Session:
     duration_sec: float
     events: list[dict]
     unmapped_spike_count: int
+    amplitudes: np.ndarray | None = None
 
 
 def select_segment(handle, well=0):
@@ -93,6 +94,7 @@ def read_session(path, cfg_path=None, well=0):
         valid = np.isin(spikes["channel"], valid_channels)
         times = (spikes["frameno"][valid].astype(np.int64) - origin) / fs
         channels = spikes["channel"][valid].astype(np.int32)
+        amplitudes = spikes["amplitude"][valid].astype(float) if "amplitude" in spikes.dtype.names else None
         order = np.argsort(times, kind="stable")
         events = []
         for row in seg.get("events", []):
@@ -102,7 +104,7 @@ def read_session(path, cfg_path=None, well=0):
             events.append(dict(event_id=int(row["eventid"]), time_sec=(int(row["frameno"]) - origin) / fs,
                                eventmessage=str(message)))
         return Session(Path(path), times[order], channels[order], mapping, fs, origin, duration,
-                       events, int(np.count_nonzero(~valid)))
+                       events, int(np.count_nonzero(~valid)), None if amplitudes is None else amplitudes[order])
 
 
 def read_burst_table(path):

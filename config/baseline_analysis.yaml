@@ -1,0 +1,27 @@
+# Offline spontaneous analysis only; does not connect to MaxLab or stimulate.
+burst:
+  bin_ms: 1.0
+  smooth_ms: 50.0
+  threshold_z: 6.0
+  min_duration_ms: 30.0
+  merge_gap_ms: 30.0
+  min_spikes: 5
+network:
+  electrode_bin_ms: 1.0
+  electrode_peak_ratio_threshold: 10.0
+  pair_bin_ms: 1.0
+  pair_peak_ratio_threshold: 20.0
+  pair_min_shared_bursts: 30        # Strict >30, NOT >=30.
+  pair_min_abs_delay_ms: 5.0       # Strict >5 ms, NOT >=5 ms.
+candidates:
+  selection_count: 10             # Log up to 10; proposed Probe centres are the first 6.
+  star_count: 6
+  minimum_outdegree: 1
+  minimum_center_distance_um: 52.5 # Strict >3*17.5 um.
+  grid_neighborhood_radius_um: 17.5 # Non-overlapping 3x3 physical electrode neighbourhoods.
+  manual_review_below_peak_outdegree: 10
+plot:
+  arrow_alpha: 0.2
+  raster_max_display_spikes: 1000000 # Display only; calculations use every valid spike.
+  figure_formats: [png, pdf, svg]
+  dpi: 600

@@ -1,6 +1,6 @@
 # MaxWell 空间组合与时序刺激实验
 
-本项目按 `实验方案20261009.docx`（正文标题为“实验方案20261010”）和 docs 的 Markdown 规范生成。实现 Probe、有效电极筛选、单电极刺激、双电极同步刺激和双电极时序刺激的录制与调度。用户已说明现场准备尚未完成，CFG 可以先留空；完整分析 pipeline 和 ESRC 验证暂不实现。
+本项目按 `实验方案20261009.docx`（正文标题为“实验方案20261010”）和 docs 的 Markdown 规范生成。实现自发基线 burst/出入度 Map、人工复核候选中心、Probe、有效电极筛选、单电极刺激、双电极同步刺激和双电极时序刺激的录制与调度。完整正式响应分析 pipeline 和 ESRC 验证暂不实现。
 
 ## 实验目标与假设
 
@@ -13,10 +13,12 @@
 ```text
 spatiotemporal_20261010/
   main.py
+  analyze_baseline.py           # 独立离线基线分析，不接触硬件
   setup.py
   requirements.txt
   config/system.yaml
   config/stimulation.yaml
+  config/baseline_analysis.yaml
   python/
     experiment_runner.py
     maxwell_setup.py
@@ -30,6 +32,8 @@ spatiotemporal_20261010/
     analysis_utils.md
     utils/io.py
     utils/probe.py
+    utils/spontaneous.py
+    utils/network_plots.py
     utils/detection/burst.py
   cpp/CMakeLists.txt
   cpp/src/spike_monitor.cpp
@@ -78,19 +82,17 @@ spatiotemporal_20261010/
 
 ## 运行
 
-Python 3.10以上，真实执行在Linux MaxLab设备电脑上进行；Windows可运行模拟、配置和计划。
+Python 3.10以上，真实执行在Linux MaxLab设备电脑上进行；Windows可运行模拟、离线分析、配置和计划。现场已有 Conda `maxlab` 环境且 numpy/h5py/yaml/matplotlib 已齐全，可直接使用该环境，无须重新创建或安装依赖。
 
 仓库为私有项目。Linux 上先使用自己的 GitHub 账号完成 Git 身份验证，再克隆代码：
 
 ```bash
-git clone https://github.com/Satiiss/maxwell-spatiotemporal-20261010.git
-cd maxwell-spatiotemporal-20261010
-python3 -m venv .venv
-source .venv/bin/activate
+git clone https://github.com/Satiiss/maxwell-spatiotemporal-20261010.git /home/maxwell/Desktop/maxwell_platform/experiments/spatiotemporal_20261010
+conda activate maxlab
+cd /home/maxwell/Desktop/maxwell_platform/experiments/spatiotemporal_20261010
 ```
 
 ```bash
-python -m pip install -r requirements.txt
 python main.py --dry-run
 python main.py --mode mock --headless --quick
 python main.py --mode mock --gui
@@ -118,7 +120,61 @@ maxwell:
 
 GUI提供两层进度、CFG空间图和当前电极箭头、当前条件/电极/轮次/实际协议、位点结果表、停止、Probe跳过和重试。重试保留旧attempt文件，新建attempt目录，不覆盖。主线程只刷新状态，耗时录制、分析和绘图在worker执行。关闭窗口先等待停止和文件收尾完成。
 
-当前Probe指标在每个电极的H5关闭后根据硬件事件帧计算，UI在录制期间明确显示“待文件关闭后计算”，不将主机时间计数当成硬件对齐结果。逐trial实时伪迹与响应展示、完整连接Map嵌入及正式分析pipeline属于后续GUI/分析扩展，不在本次实现中伪造。
+当前Probe指标在每个电极的H5关闭后根据硬件事件帧计算，UI在录制期间明确显示“待文件关闭后计算”，不将主机时间计数当成硬件对齐结果。完整自发连接 Map 可由离线分析输出；逐trial实时伪迹与响应展示、Map嵌入GUI及正式响应分析pipeline属于后续扩展。
+
+## 已有600s基线的离线出入度 Map
+
+H5/CFG映射核对通过后，先分析自发网络，再人工复核5–6个候选中心，随后填写实验配置进行Probe。以下命令只读输入文件，结果只写到本项目新建的 `data/{YYYYMMDD_HHMMSS}_data/pre_experiment/`，不会修改原始H5、CFG、其他实验或Conda环境，也不会连接MaxLab或开始刺激。
+
+```bash
+conda activate maxlab
+cd /home/maxwell/Desktop/maxwell_platform/experiments/spatiotemporal_20261010
+git pull --ff-only
+python -B analyze_baseline.py \
+  --h5 /home/maxwell/Data/20261011-hzl-28878/261011/28878/Network/000004/data.raw.h5 \
+  --cfg /home/maxwell/configs/261011/01h19m58s.cfg
+```
+
+默认参数来自 `config/baseline_analysis.yaml`。burst复用现有检测器：1ms bin、50ms平滑、z=6、最短30ms、合并间隔30ms、至少5 spikes；其原有密度回退逻辑保留。需同时查看 `burst_overview` 和 raster，确认检测适合当前培养物。若使用人工复核的burst表，传入 `--bursts-csv /path/to/reviewed.csv`，列为 `start_sec,end_sec`，相对本H5首帧，不得越界或重叠。
+
+连接按每个burst内电极的第一次激活计算：B−A峰延时为正时画A→B，负时画B→A。共同参与burst数严格>30，延时直方图bin=1ms、峰比>=20，峰延时绝对值严格>5ms。单电极首次激活峰比>=10只是稳定标签，不额外筛除电极对。峰比沿用现有定义 `max(bin counts) / median(nonzero bin counts)`；中位数包含峰bin，因此全部样本落在单个bin时峰比为1。程序不会隐式更换统计定义。
+
+全部合格边参与出入度和完整箭头图，未设80条或其他显示上限。静默电极保留在指标表；发放率分母是H5完整录制时长。候选按出度、入度、发放率、平均绝对spike幅值降序，最后按电极ID升序。中心间距严格>52.5µm、3×3物理邻域互斥；每个unit取当前记录映射中物理最近的3个邻居，并排除unit共享电极。保留至多10个候选，前6个画星号。刺激路由可用性仍由后续Probe阶段核对。
+
+输出结构如下（只引用原始H5，不复制3.6GB文件）：
+
+```text
+data/{YYYYMMDD_HHMMSS}_data/
+  HHhMMmSSs.cfg                 # 原CFG的副本
+  log.txt
+  pre_experiment/
+    source_inputs.json          # H5路径/大小/mtime，CFG的SHA256
+    parameters.yaml
+    workflow_state.json
+    baseline_bursts.csv
+    baseline_statistics.json
+    candidate_centers_proposed.yaml # 待人工复核草稿，不覆盖system.yaml
+    summary.txt
+    network/
+      stable_electrode_metrics.csv # 全部记录电极及stable_activation标签
+      stable_delay_edges.csv
+      candidate_sites.csv
+      first_activation.npz
+      network_parameter_history.{csv,json}
+      figure_manifest.json
+      baseline_raster.{png,pdf,svg}
+      burst_overview.{png,pdf,svg}
+      out_degree_map.{png,pdf,svg}
+      in_degree_map.{png,pdf,svg}
+      spontaneous_network_all_edges.{png,pdf,svg}
+      spontaneous_network_selected_sites.{png,pdf,svg}
+```
+
+若最大出度<10，保存 `REVIEW_NETWORK_PARAMETERS`，等待人工复核；不足5个中心也不会补入无连接或重叠位点。最大出度达标且有足够中心时仍保存 `REVIEW_CANDIDATES`，不自动开始Probe。
+
+人工参数复核可复制分析YAML到本项目后只修改四个pair参数，然后用相同H5/CFG及 `--config <修改后的YAML> --previous-run <旧pre_experiment目录>` 重算。该模式锁定burst、stable-electrode和其他参数，保留旧结果，并在新结果继承和追加revision历史，两张Map标注revision。人工选择保留低出度参数时，在同一命令添加 `--keep-low-outdegree --review-reason '具体原因'`；只记录人工选择，仍须复核候选及填写Probe配置。
+
+分析绘图文字为英文；终端两层进度与日志为中文。raster超过100万spikes时只抽取显示点，计算仍使用全部spikes，并在图及manifest注明实际显示数量。
 
 ## 录制与时间记录
 
@@ -185,7 +241,7 @@ run_dir/
 - `experiment_template.md`：独立项目、单入口、YAML、run归档、三段录制、Event和段内时间表。
 - `data_template.md`：CFG微米坐标、H5映射校验、全局帧换算与run审计表。
 - `stim_pool_routing_limits.md`：unique stim units、DAC0/1、仅prev/current快切；settle wait默认50ms只是初始值，需要用现场测量值替换，未做真实A/B验证。
-- `pre_experiment_automation.md`：本次采用人工审阅中心输入，不启用自动高出度选点状态机；Probe响应定义按本次方案覆盖默认3–50ms/2倍局部基线规则，保留严格>60%接续门槛。
+- `pre_experiment_automation.md`：离线完成burst、完整网络、出入度、空间互斥候选及低出度参数复核记录，再人工审阅中心输入；不自动衔接硬件。Probe响应定义按本次方案覆盖默认3–50ms/2倍局部基线规则，保留严格>60%接续门槛。
 - `analysis_template.md`：Probe保存0–2ms均值及通用>=200标记，同时按本次方案保存0–3ms严格>300及10–50ms判定；正式数据检查pipeline按用户要求暂缓。
 - `coding_style.md`与`paper.md`：结果自动输出、参数快照、日志与进度、600dpi PNG及矢量图；无标题和背景网格。
 
@@ -199,4 +255,4 @@ python -m unittest discover -s tests -v
 
 软件检查覆盖调度计数、交叉顺序、两种时序方向、DAC极性、精确dt、严格7/10门槛、unit排名、时间原点及失败门控。模拟运行不导入maxlab、不连接设备，其H5带synthetic属性，没有真实raw电压。
 
-未进行真实刺激、Linux静态库链接、硬件路由/settling现场验收或实验科学结论验证。正式分析中的强响应概率、稳定延时Map、Consistency、ESRC和第一刺激污染验证按用户最新要求暂缓。
+未进行真实刺激、Linux静态库链接、硬件路由/settling现场验收或实验科学结论验证。自发基线的稳定延时Map用于实验前选点，已实现；正式刺激响应中的强响应概率、稳定延时Map、Consistency、ESRC和第一刺激污染验证按用户要求暂缓。
