@@ -22,8 +22,10 @@ from .figures import unit_map, raster, summary_table
 
 
 class ExperimentRunner:
-    def __init__(self, system, stimulation, run_dir, backend, reporter):
+    def __init__(self, system, stimulation, run_dir, backend, reporter, probe_only=False):
         self.system, self.stimulation = copy.deepcopy(system), copy.deepcopy(stimulation)
+        self.probe_only = probe_only
+        self.system["experiment"]["execution_scope"] = "probe_only" if probe_only else "full"
         self.run_dir, self.backend, self.reporter = Path(run_dir), backend, reporter
         self.current_log = None
         self.completed_segments = []
@@ -36,6 +38,7 @@ class ExperimentRunner:
 
     def state(self, stage, **details):
         state = dict(stage=stage, updated_utc=utc_now(), run_dir=str(self.run_dir),
+                    execution_scope="probe_only" if self.probe_only else "full",
                     completed_segments=self.completed_segments, completed_trials=self.completed_trials,
                     selected_formal_units=getattr(self, "formal_units", []))
         state.update(details)
@@ -207,10 +210,12 @@ class ExperimentRunner:
         cfg = self.stimulation["probe"]
         rounds = cfg["trials_per_electrode"]
         site_summaries = []
-        formal_rounds = self.stimulation["formal"]["trials_per_condition"]
-        if not self.backend.realtime and self.system["mock"].get("trials_per_condition_override"):
-            formal_rounds = self.system["mock"]["trials_per_condition_override"]
-        self.global_total = len(self.units) * 4 * rounds + (12 + 12 * len(self.stimulation["formal"]["dt_ms"])) * formal_rounds
+        self.global_total = len(self.units) * 4 * rounds
+        if not self.probe_only:
+            formal_rounds = self.stimulation["formal"]["trials_per_condition"]
+            if not self.backend.realtime and self.system["mock"].get("trials_per_condition_override"):
+                formal_rounds = self.system["mock"]["trials_per_condition_override"]
+            self.global_total += (12 + 12 * len(self.stimulation["formal"]["dt_ms"])) * formal_rounds
         self.state("RUN_PROBE")
         for unit in self.units:
             pool = self.backend.route(unit["electrodes"])
@@ -313,7 +318,13 @@ class ExperimentRunner:
             self.initialize()
             self.prepare_baseline()
             self.probes()
-            self.formal()
+            if self.probe_only:
+                self.result = dict(status="probe_complete", execution_scope="probe_only",
+                    synthetic=not self.backend.realtime, formal_started=False, formal_trial_count=0,
+                    probe_trial_count=self.completed_trials, selected_formal_units=self.formal_units,
+                    analysis_pipeline_deferred=True, completed_utc=utc_now())
+            else:
+                self.formal()
         except BaseException as exc:
             logging.exception("实验未完成，停止刺激并保存状态")
             if self.current_log:
@@ -346,5 +357,5 @@ class ExperimentRunner:
             finally:
                 self.audit.add("experiment_end")
                 self.audit.close()
-        self.state("COMPLETE")
+        self.state("PROBE_COMPLETE" if self.probe_only else "COMPLETE")
         atomic_json(self.run_dir / "experiment_result.json", self.result)

@@ -64,14 +64,15 @@ def create_run(system):
     return path
 
 
-def validate(system, stimulation, hardware=False):
+def validate(system, stimulation, hardware=False, probe_only=False):
     from python.schedule import Condition, waveform_commands, next_onset_interval, pulse_duration_sec
     p = stimulation["protocol"]
-    if not 1 <= stimulation["probe"]["trials_per_electrode"] or not 1 <= stimulation["formal"]["trials_per_condition"]:
+    if (not 1 <= stimulation["probe"]["trials_per_electrode"] or
+            (not probe_only and not 1 <= stimulation["formal"]["trials_per_condition"])):
         raise ValueError("trial数必须为正整数")
-    if stimulation["formal"]["temporal_interval_mode"] not in ("after_second", "onset_to_onset"):
+    if not probe_only and stimulation["formal"]["temporal_interval_mode"] not in ("after_second", "onset_to_onset"):
         raise ValueError("时序间隔模式必须显式设置")
-    if stimulation["formal"]["condition_order"] != "cyclic":
+    if not probe_only and stimulation["formal"]["condition_order"] != "cyclic":
         raise ValueError("本方案要求循环交叉条件刺激")
     if system["routing"]["mode"] != "pool_fast" or not system["routing"]["require_unique_stim_units"]:
         raise ValueError("交叉条件必须快切，且禁止共用stim unit")
@@ -81,7 +82,8 @@ def validate(system, stimulation, hardware=False):
         raise ValueError("本次方案需要保留原始波形排查伪迹及第一脉冲污染，请启用raw_recording")
     if p["sequence_initial_delay_samples"] < 0:
         raise ValueError("初始序列延迟不能为负")
-    for dt in stimulation["formal"]["dt_ms"]:
+    waveform_commands(Condition("validation_probe", "probe", (1,), ("a",)), p, 2.98, 1)
+    for dt in ([] if probe_only else stimulation["formal"]["dt_ms"]):
         if dt <= 0:
             raise ValueError("dt必须为正")
         c = Condition("validation", "temporal", (1, 2), ("a", "b"), float(dt))
@@ -118,7 +120,15 @@ def build_cpp(system):
     system["maxwell"]["monitor_executable"] = str(executable)
 
 
-def make_plan(system, stimulation):
+def make_plan(system, stimulation, probe_only=False):
+    if probe_only:
+        centers = system["manual_inputs"]["candidate_centers"]
+        return dict(execution_scope="probe_only", stages=[], formal_trial_count=0,
+                    formal_nominal_duration_sec=0,
+                    raw_uncompressed_bytes_at_1024_channels_20khz=0,
+                    probe_trial_count=(len(centers) if centers else 6) * 4 * stimulation["probe"]["trials_per_electrode"],
+                    pending_inputs=["cfg_path", "culture", "candidate_centers", "probe.threshold_rule"],
+                    full_analysis_deferred=True)
     from python.schedule import formal_conditions, round_robin, Condition, next_onset_interval, pulse_duration_sec
     units = [dict(electrodes=[10 * i, 10 * i + 1]) for i in range(1, 4)]
     stages = formal_conditions(units, stimulation["formal"]["dt_ms"])
@@ -130,17 +140,21 @@ def make_plan(system, stimulation):
                   for stage, conditions in stages]
     duration = sum(r["nominal_duration_sec"] for r in stage_rows) + formal["pre_spontaneous_sec"] + formal["post_spontaneous_sec"]
     duration += (len(stage_rows) - 1) * formal["rest_between_stages_sec"] + formal["rest_after_last_stage_sec"]
-    return dict(stages=stage_rows, formal_trial_count=sum(r["trials"] for r in stage_rows),
+    return dict(execution_scope="full", stages=stage_rows, formal_trial_count=sum(r["trials"] for r in stage_rows),
                 formal_nominal_duration_sec=duration, temporal_interval_mode=formal["temporal_interval_mode"],
                 raw_uncompressed_bytes_at_1024_channels_20khz=duration * 1024 * 20000 * 2,
                 pending_inputs=["cfg_path", "culture", "candidate_centers", "probe.threshold_rule"],
                 full_analysis_deferred=True)
 
 
-def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quick=False, compile_cpp=False):
+def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quick=False, compile_cpp=False,
+            probe_only=False):
     from python.utils.progress import Reporter
     from python.utils.persistence import atomic_json
     import yaml
+    import copy
+    system, stimulation = copy.deepcopy(system), copy.deepcopy(stimulation)
+    system["experiment"]["execution_scope"] = "probe_only" if probe_only else "full"
     reporter = reporter or Reporter()
     run_dir = create_run(system)
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
@@ -151,12 +165,15 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
     logger.addHandler(file_handler)
     try:
         check_environment(hardware=mode == "hardware" and not dry_run, api_parent=system["maxwell"].get("api_parent"))
-        validate(system, stimulation, hardware=mode == "hardware" and not dry_run)
-        plan = make_plan(system, stimulation)
+        validate(system, stimulation, hardware=mode == "hardware" and not dry_run, probe_only=probe_only)
+        plan = make_plan(system, stimulation, probe_only=probe_only)
         atomic_json(run_dir / "experiment_plan.json", plan)
-        logging.info("run=%s | 正式trial=%d | 名义时长=%.1fmin | raw未压缩估计=%.1fGB",
-                     run_dir, plan["formal_trial_count"], plan["formal_nominal_duration_sec"] / 60,
-                     plan["raw_uncompressed_bytes_at_1024_channels_20khz"] / 1e9)
+        if probe_only:
+            logging.info("run=%s | 仅运行Probe，完成后停止；不会进入正式实验", run_dir)
+        else:
+            logging.info("run=%s | 正式trial=%d | 名义时长=%.1fmin | raw未压缩估计=%.1fGB",
+                         run_dir, plan["formal_trial_count"], plan["formal_nominal_duration_sec"] / 60,
+                         plan["raw_uncompressed_bytes_at_1024_channels_20khz"] / 1e9)
         if dry_run:
             snapshot = run_dir / "config_snapshot"
             snapshot.mkdir()
@@ -176,7 +193,7 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
             from python.mock_backend import MockBackend
             backend = MockBackend(system, reporter)
         from python.experiment_runner import ExperimentRunner
-        runner = ExperimentRunner(system, stimulation, run_dir, backend, reporter)
+        runner = ExperimentRunner(system, stimulation, run_dir, backend, reporter, probe_only=probe_only)
         runner.run()
         return run_dir
     except BaseException as exc:
@@ -198,6 +215,7 @@ def main():
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--gui", action="store_true")
     parser.add_argument("--build-cpp", action="store_true")
+    parser.add_argument("--probe-only", action="store_true", help="仅执行基线准备和Probe，完成后收尾停止，不进入正式实验")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
@@ -207,7 +225,8 @@ def main():
             return launch(system, stimulation, args)
         if args.mode == "hardware" and not args.enable_hardware and not args.dry_run:
             raise ValueError("真实执行请显式使用 --mode hardware --enable-hardware")
-        output = execute(system, stimulation, args.mode, dry_run=args.dry_run, quick=args.quick, compile_cpp=args.build_cpp)
+        output = execute(system, stimulation, args.mode, dry_run=args.dry_run, quick=args.quick,
+                         compile_cpp=args.build_cpp, probe_only=args.probe_only)
         print(f"运行结果目录: {output.resolve()}")
         return 0
     except KeyboardInterrupt:

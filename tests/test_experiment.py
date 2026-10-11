@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 import copy
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import numpy as np
 import h5py
 
@@ -19,6 +20,8 @@ from python.utils.progress import Reporter, ExperimentStopped
 from python.utils.time_log import SegmentStimLog
 from analysis.utils.io import read_session
 from analysis.utils.probe import evaluate_probe, rank_units, baseline_distribution
+from python.experiment_runner import ExperimentRunner
+from python.mock_backend import MockBackend
 
 
 class SoftwareChecks(unittest.TestCase):
@@ -189,6 +192,73 @@ class SoftwareChecks(unittest.TestCase):
         self.assertEqual(plan["formal_trial_count"], 5400)
         self.assertIsNone(self.system["electrode_map"]["cfg_path"])
         self.assertIsNone(self.stimulation["probe"]["threshold_rule"])
+
+    def test_probe_only_plan_has_no_formal_schedule(self):
+        plan = make_plan(self.system, self.stimulation, probe_only=True)
+        self.assertEqual(plan["execution_scope"], "probe_only")
+        self.assertEqual(plan["formal_trial_count"], 0)
+        self.assertEqual(plan["stages"], [])
+        self.assertEqual(plan["probe_trial_count"], 240)
+        self.stimulation["formal"]["temporal_interval_mode"] = "onset_to_onset"
+        validate(self.system, self.stimulation, probe_only=True)
+        with self.assertRaises(ValueError):
+            validate(self.system, self.stimulation)
+
+    def test_probe_only_records_all_sites_without_formal_stimulation(self):
+        self.system["mock"]["baseline_duration_override_sec"] = 40
+        self.stimulation["probe"]["threshold_rule"] = "mean_plus_3variance"
+        reporter = Reporter()
+        with tempfile.TemporaryDirectory(dir=ROOT / "data") as directory:
+            backend = MockBackend(self.system, reporter)
+            backend.shutdown = MagicMock(wraps=backend.shutdown)
+            runner = ExperimentRunner(self.system, self.stimulation, directory, backend, reporter, probe_only=True)
+            with patch("python.experiment_runner.unit_map"), patch("python.experiment_runner.raster"), \
+                    patch("python.experiment_runner.summary_table"), patch.object(runner, "formal") as formal:
+                runner.run()
+            formal.assert_not_called()
+            backend.shutdown.assert_called_once()
+            self.assertFalse(backend.recording)
+            self.assertEqual(backend.active, {})
+            path = Path(directory)
+            result = json.loads((path / "experiment_result.json").read_text())
+            self.assertEqual(result["status"], "probe_complete")
+            self.assertEqual(result["probe_trial_count"], 240)
+            self.assertEqual(result["formal_trial_count"], 0)
+            self.assertFalse(result["formal_started"])
+            self.assertEqual(runner.global_total, 240)
+            self.assertEqual(len(list((path / "pre_experiment/02_probe").rglob("*.raw.h5"))), 24)
+            self.assertTrue((path / "pre_experiment/selected_formal_sites.yaml").is_file())
+            self.assertFalse((path / "raw_data").exists())
+            state = json.loads((path / "pre_experiment/workflow_state.json").read_text())
+            self.assertEqual(state["stage"], "PROBE_COMPLETE")
+
+    def test_full_run_still_continues_after_probe(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "data") as directory:
+            backend = MagicMock()
+            runner = ExperimentRunner(self.system, self.stimulation, directory, backend, Reporter())
+            runner.initialize = MagicMock()
+            runner.prepare_baseline = MagicMock()
+            runner.probes = MagicMock()
+            def formal():
+                runner.result = dict(status="complete")
+            runner.formal = MagicMock(side_effect=formal)
+            runner.run()
+            runner.probes.assert_called_once()
+            runner.formal.assert_called_once()
+            backend.shutdown.assert_called_once()
+
+    def test_probe_only_failure_still_shuts_down_without_formal(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "data") as directory:
+            backend = MagicMock()
+            runner = ExperimentRunner(self.system, self.stimulation, directory, backend, Reporter(), probe_only=True)
+            runner.initialize = MagicMock()
+            runner.prepare_baseline = MagicMock()
+            runner.probes = MagicMock(side_effect=ValueError("insufficient units"))
+            runner.formal = MagicMock()
+            with self.assertLogs(level="ERROR"), self.assertRaises(ValueError):
+                runner.run()
+            runner.formal.assert_not_called()
+            backend.shutdown.assert_called_once()
 
 
 if __name__ == "__main__":

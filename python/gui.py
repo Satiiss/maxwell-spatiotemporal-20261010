@@ -41,12 +41,20 @@ def launch(system, stimulation, args):
     formula = tk.StringVar(value={None: "待明确", "mean_plus_3sd": "均值 + 3倍标准差", "mean_plus_3variance": "均值 + 3倍方差"}[stimulation["probe"]["threshold_rule"]])
     interval = tk.StringVar(value="第二脉冲结束后1秒" if stimulation["formal"]["temporal_interval_mode"] == "after_second" else "第一脉冲间隔1秒")
     quick = tk.BooleanVar(value=args.quick)
+    probe_only = tk.BooleanVar(value=args.probe_only)
     options = ttk.Frame(header)
     options.grid(row=5, column=0, columnspan=3, sticky="w", padx=6, pady=6)
     ttk.Combobox(options, textvariable=mode, values=["模拟", "真实硬件"], state="readonly", width=12).pack(side="left", padx=4)
     ttk.Combobox(options, textvariable=formula, values=["待明确", "均值 + 3倍标准差", "均值 + 3倍方差"], state="readonly", width=22).pack(side="left", padx=4)
     ttk.Combobox(options, textvariable=interval, values=["第二脉冲结束后1秒", "第一脉冲间隔1秒"], state="readonly", width=20).pack(side="left", padx=4)
     ttk.Checkbutton(options, text="缩短模拟数据", variable=quick).pack(side="left", padx=4)
+    start_text = tk.StringVar(value="开始Probe" if probe_only.get() else "开始实验")
+    def update_scope_label():
+        start_text.set("开始Probe" if probe_only.get() else "开始实验")
+    ttk.Checkbutton(header, text="仅运行 Probe（完成后停止）", variable=probe_only,
+                    command=update_scope_label).grid(row=6, column=0, columnspan=3, sticky="w", padx=10)
+    ttk.Label(header, text="不勾选时，Probe通过后自动进入正式实验。" ).grid(
+        row=7, column=0, columnspan=3, sticky="w", padx=10, pady=3)
     status = tk.StringVar(value="待启动；真实输入可暂时留空")
     ttk.Label(root, textvariable=status, wraplength=1000).pack(fill="x", padx=12)
     ttk.Label(root, text="总任务进度").pack(anchor="w", padx=12)
@@ -136,19 +144,20 @@ def launch(system, stimulation, args):
         start_button.configure(state="disabled")
         table.delete(*table.get_children())
         # Read Tk variables only on the UI thread.
-        selected_mode, selected_quick = mode.get(), quick.get()
+        selected_mode, selected_quick, selected_probe_only = mode.get(), quick.get(), probe_only.get()
         def safe_job():
             try:
                 from main import execute
                 path = execute(s, p, "mock" if selected_mode == "模拟" else "hardware", reporter=reporter,
-                               dry_run=dry_run, quick=selected_quick, compile_cpp=args.build_cpp)
-                events.put({"finished": str(path), "dry_run": dry_run})
+                               dry_run=dry_run, quick=selected_quick, compile_cpp=args.build_cpp,
+                               probe_only=selected_probe_only)
+                events.put({"finished": str(path), "dry_run": dry_run, "probe_only": selected_probe_only})
             except BaseException as exc:
                 events.put({"error": str(exc)})
         worker = threading.Thread(target=safe_job, daemon=False)
         worker.start()
 
-    start_button = ttk.Button(controls, text="开始实验", command=start)
+    start_button = ttk.Button(controls, textvariable=start_text, command=start)
     start_button.pack(side="left", padx=4)
     ttk.Button(controls, text="只生成调度计划", command=lambda: start(True)).pack(side="left", padx=4)
     ttk.Button(controls, text="停止实验", command=stop.set).pack(side="left", padx=4)
@@ -168,7 +177,9 @@ def launch(system, stimulation, args):
                     if int(logs.index("end-1c").split(".")[0]) > 3000:
                         logs.delete("1.0", "1000.0")
                 elif "finished" in item:
-                    status.set(("计划已保存：" if item.get("dry_run") else "执行完成：") + item["finished"])
+                    label = ("计划已保存：" if item.get("dry_run") else
+                             "Probe已结束（未开始正式实验）：" if item.get("probe_only") else "执行完成：")
+                    status.set(label + item["finished"])
                     start_button.configure(state="normal")
                     overall["value"] = 100
                     skip.configure(state="disabled")

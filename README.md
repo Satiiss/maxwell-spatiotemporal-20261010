@@ -84,7 +84,7 @@ spatiotemporal_20261010/
 
 Python 3.10以上，真实执行在Linux MaxLab设备电脑上进行；Windows可运行模拟、离线分析、配置和计划。现场已有 Conda `maxlab` 环境且 numpy/h5py/yaml/matplotlib 已齐全，可直接使用该环境，无须重新创建或安装依赖。
 
-仓库为私有项目。Linux 上先使用自己的 GitHub 账号完成 Git 身份验证，再克隆代码：
+仓库现为公开项目。Linux 上可直接克隆代码；已有非空项目目录应先完成原地仓库初始化，再拉取更新：
 
 ```bash
 git clone https://github.com/Satiiss/maxwell-spatiotemporal-20261010.git /home/maxwell/Desktop/maxwell_platform/experiments/spatiotemporal_20261010
@@ -106,6 +106,16 @@ python main.py --mode mock --gui
 python main.py --mode hardware --enable-hardware --headless
 python main.py --mode hardware --gui
 ```
+
+先单独进行Probe时，使用：
+
+```bash
+python -B main.py --mode hardware --gui --probe-only
+```
+
+此命令只打开配置窗口；填写现场输入并点击“开始Probe”后才执行硬件操作。保持“仅运行 Probe（完成后停止）”勾选：按原方案完成基线准备、全部候选位点Probe和有效位点筛选，然后关闭文件、断开刺激连接并停止；不生成正式实验的刺激或前/后自发录制。结果状态为`PROBE_COMPLETE`，`experiment_result.json`中的`formal_trial_count`为0。GUI本次选择、命令行模式和配置快照均记录`execution_scope: probe_only`。
+
+无GUI时，可在填写配置后使用`--mode hardware --enable-hardware --headless --probe-only`。`--dry-run --probe-only`只生成Probe计划；`--mode mock --headless --quick --probe-only`可模拟检查。未指定该选项，或在GUI取消勾选时，仍按完整流程在Probe通过后自动进入正式实验。仅Probe模式没有实现从旧结果恢复正式实验；后续完整运行会重新执行Probe。合格unit不足时保存已有位点结果并停止，不放宽门槛。
 
 可选C++监视配置：
 
