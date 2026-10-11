@@ -22,10 +22,14 @@ from .figures import unit_map, raster, summary_table
 
 
 class ExperimentRunner:
-    def __init__(self, system, stimulation, run_dir, backend, reporter, probe_only=False):
+    def __init__(self, system, stimulation, run_dir, backend, reporter, probe_only=True, formal_handoff=None):
+        if not probe_only and formal_handoff is None:
+            raise ValueError("禁止自动衔接正式实验；请独立加载已审阅的Probe结果")
         self.system, self.stimulation = copy.deepcopy(system), copy.deepcopy(stimulation)
         self.probe_only = probe_only
-        self.system["experiment"]["execution_scope"] = "probe_only" if probe_only else "full"
+        self.formal_handoff = formal_handoff
+        self.stimulation["probe"]["enforce_artifact_qc"] = False
+        self.system["experiment"]["execution_scope"] = "probe_only" if probe_only else "formal_only"
         self.run_dir, self.backend, self.reporter = Path(run_dir), backend, reporter
         self.current_log = None
         self.completed_segments = []
@@ -38,7 +42,7 @@ class ExperimentRunner:
 
     def state(self, stage, **details):
         state = dict(stage=stage, updated_utc=utc_now(), run_dir=str(self.run_dir),
-                    execution_scope="probe_only" if self.probe_only else "full",
+                    execution_scope="probe_only" if self.probe_only else "formal_only",
                     completed_segments=self.completed_segments, completed_trials=self.completed_trials,
                     selected_formal_units=getattr(self, "formal_units", []))
         state.update(details)
@@ -268,9 +272,29 @@ class ExperimentRunner:
                 self.backend.disconnect_active() if self.backend.realtime else self.backend.switch(())
                 self.reporter.wait(cfg["inter_electrode_pause_sec"], "Probe位点间等待", realtime=self.backend.realtime)
         summary_table(site_summaries, pre / "probe_summary")
-        self.formal_units = rank_units(site_summaries, cfg["formal_unit_count"], cfg["formal_electrodes_per_unit"])
+        unit_reports = []
+        for unit in self.units:
+            rows = [r for r in site_summaries if r["unit_id"] == unit["unit_id"]]
+            valid = sorted([r for r in rows if r["eligible"]],
+                           key=lambda r: (-r["success_fraction"], -r["response_10_50ms_mean"], r["electrode"]))
+            unit_reports.append(dict(unit_id=unit["unit_id"], center=unit["center"],
+                tested_electrodes=unit["electrodes"], valid_electrode_count=len(valid),
+                valid_electrodes=[r["electrode"] for r in valid], valid_site_metrics=valid,
+                enough_for_formal=len(valid) >= 2))
+        unit_reports.sort(key=lambda u: (-u["valid_electrode_count"],
+            -sum(r["success_fraction"] for r in u["valid_site_metrics"][:2]), u["unit_id"]))
+        atomic_json(pre / "probe_unit_summary.json", unit_reports)
+        write_csv(pre / "probe_unit_summary.csv", [dict(unit_id=u["unit_id"], center=u["center"],
+            valid_electrode_count=u["valid_electrode_count"], valid_electrodes=";".join(map(str, u["valid_electrodes"])),
+            enough_for_formal=u["enough_for_formal"]) for u in unit_reports])
+        self.probe_ready = sum(u["enough_for_formal"] for u in unit_reports) >= cfg["formal_unit_count"]
+        self.formal_units = (rank_units(site_summaries, cfg["formal_unit_count"], cfg["formal_electrodes_per_unit"])
+                             if self.probe_ready else [])
         (pre / "selected_formal_sites.yaml").write_text(yaml.safe_dump(self.formal_units, allow_unicode=True, sort_keys=False), encoding="utf-8")
-        self.state("PROBE_PASSED", selected_formal_units=self.formal_units)
+        self.state("PROBE_PASSED" if self.probe_ready else "PROBE_REVIEW_REQUIRED",
+                   ready_for_formal=self.probe_ready, selected_formal_units=self.formal_units)
+        if not self.probe_ready:
+            logging.warning("不足3个各有至少2个有效位点的unit；请人工排查0–3ms伪迹/API及培养物活性后重新Probe，不自动重试刺激")
         return self.formal_units
 
     def formal(self):
@@ -313,7 +337,7 @@ class ExperimentRunner:
         self.finish_segment(total)
         self.spontaneous(directory / "03_post_spont", block, "03_post_spont", cfg["post_spontaneous_sec"])
         self.result = dict(status="complete", synthetic=not self.backend.realtime,
-                    formal_trial_count=total, probe_trial_count=len(self.units) * 4 * self.stimulation["probe"]["trials_per_electrode"],
+                    execution_scope="formal_only", formal_started=True, formal_trial_count=total, probe_trial_count=0,
                     selected_formal_units=self.formal_units, analysis_pipeline_deferred=True,
                     completed_utc=utc_now(), raw_data=str(directory))
 
@@ -321,14 +345,18 @@ class ExperimentRunner:
         self.state("INITIALIZE")
         try:
             self.initialize()
-            self.prepare_baseline()
-            self.probes()
             if self.probe_only:
-                self.result = dict(status="probe_complete", execution_scope="probe_only",
+                self.prepare_baseline()
+                self.probes()
+                self.result = dict(status="probe_complete" if self.probe_ready else "probe_review_required", execution_scope="probe_only",
                     synthetic=not self.backend.realtime, formal_started=False, formal_trial_count=0,
+                    ready_for_formal=self.probe_ready, requires_manual_review=True,
                     probe_trial_count=self.completed_trials, selected_formal_units=self.formal_units,
                     analysis_pipeline_deferred=True, completed_utc=utc_now())
             else:
+                self.formal_units, reference = self.formal_handoff
+                atomic_json(self.run_dir / "pre_experiment/probe_source_reference.json", reference)
+                self.state("LOAD_REVIEWED_PROBE", **reference)
                 self.formal()
         except BaseException as exc:
             logging.exception("实验未完成，停止刺激并保存状态")
@@ -362,5 +390,5 @@ class ExperimentRunner:
             finally:
                 self.audit.add("experiment_end")
                 self.audit.close()
-        self.state("PROBE_COMPLETE" if self.probe_only else "COMPLETE")
+        self.state(("PROBE_COMPLETE" if self.probe_ready else "PROBE_REVIEW_REQUIRED") if self.probe_only else "COMPLETE")
         atomic_json(self.run_dir / "experiment_result.json", self.result)

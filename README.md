@@ -55,7 +55,7 @@ spatiotemporal_20261010/
 | unit | 中心+当前CFG中物理最近的3个电极；重复、重叠和不可路由情况报错 |
 | Probe | 每unit的4个单电极各10次、2Hz、400mV、单相300µs、先负后正；每次只连接当前电极 |
 | Probe响应 | [10,50)ms population spike count，与去burst的同宽40ms背景窗口分布比较 |
-| Probe有效性 | 响应成功比例严格>0.60；10次至少7次。伪迹QC默认参与有效trial判定 |
+| Probe有效性 | 响应成功比例严格>0.60；10次至少7次。0–3ms伪迹仅作刺激送达排查指标 |
 | 正式选点 | 合格unit的有效电极数量优先，其次响应概率；选3unit×2电极 |
 | 正式刺激 | 每条件50trial；条件循环交叉，不连续重复同条件50次 |
 | 同步组合 | 3个unit内组合+3个最优a电极跨unit组合 |
@@ -113,9 +113,17 @@ python main.py --mode hardware --gui
 python -B main.py --mode hardware --gui --probe-only
 ```
 
-此命令只打开配置窗口；填写现场输入并点击“开始Probe”后才执行硬件操作。保持“仅运行 Probe（完成后停止）”勾选：按原方案完成基线准备、全部候选位点Probe和有效位点筛选，然后关闭文件、断开刺激连接并停止；不生成正式实验的刺激或前/后自发录制。结果状态为`PROBE_COMPLETE`，`experiment_result.json`中的`formal_trial_count`为0。GUI本次选择、命令行模式和配置快照均记录`execution_scope: probe_only`。
+此命令只打开配置窗口；填写现场输入并点击“开始Probe”后才执行硬件操作。GUI固定仅执行Probe：按原方案完成基线准备、全部候选位点Probe和有效位点筛选，然后关闭文件、断开刺激连接并停止；不生成正式实验的刺激或前/后自发录制。合格时状态为`PROBE_COMPLETE`，`experiment_result.json`中的`formal_trial_count`为0。命令行未指定阶段也默认只执行Probe，始终等待人工审阅。
 
-无GUI时，可在填写配置后使用`--mode hardware --enable-hardware --headless --probe-only`。`--dry-run --probe-only`只生成Probe计划；`--mode mock --headless --quick --probe-only`可模拟检查。未指定该选项，或在GUI取消勾选时，仍按完整流程在Probe通过后自动进入正式实验。仅Probe模式没有实现从旧结果恢复正式实验；后续完整运行会重新执行Probe。合格unit不足时保存已有位点结果并停止，不放宽门槛。
+无GUI时，在填写配置后使用`--mode hardware --enable-hardware --headless --probe-only`。`--dry-run --probe-only`只生成Probe计划；`--mode mock --headless --quick --probe-only`可模拟检查。0–3ms伪迹用于诊断，不参与有效刺激判定；本实验入口会将旧配置`enforce_artifact_qc: true`覆盖为false并在日志和快照中记录，原始YAML不修改。响应统计全部记录电极，使用去burst的同宽40ms背景窗口；`mean_plus_3variance`明确指窗口计数均值+3倍计数方差，另保存背景Hz。Probe结束自动保存各unit完整有效位点列表`probe_unit_summary.json/csv`及建议的3×2选点。若不足3个各有至少2个有效单电极的unit，保存`PROBE_REVIEW_REQUIRED`，等待人工排查API/0–3ms伪迹及培养物活性后再启动Probe，不自动反复刺激。
+
+审阅Probe汇总及`pre_experiment/selected_formal_sites.yaml`后，正式实验独立启动：
+
+```bash
+python -B main.py --mode hardware --enable-hardware --headless --formal-from /absolute/path/to/completed_probe_run
+```
+
+传入Probe的整个run目录。正式入口在接触硬件前验证完成状态、真实/模拟标记、培养物、设备/well、CFG哈希、波形/Probe定义，以及选中的3unit×2电极确有完整10次且至少7次成功；可人工调整建议选点，但仅限原unit内有效位点。然后在新run中执行正式前自发、正式刺激和正式后自发，不重新做Probe或初始基线背景分析。保存`probe_source_reference.json`关联源Probe及审阅选点哈希。未提供源Probe时不能启动正式刺激。真实正式实验禁止使用模拟Probe结果。
 
 Probe逐位点使用`single_connect`：保留中心及原来的三个最近记录邻居，每次仅将当前一个电极连接到刺激单元，完成其10次刺激、关闭记录并断开后，再路由下一个电极；同一段内不重路由。避免把四个邻近位点同时接入时发生共享刺激单元冲突。每个attempt的`routing.json`及`probe_metrics.json`、汇总CSV保存实际刺激单元编号；不同单电极段可以先后使用同一编号。记录映射仍必须与原CFG完全一致。Probe响应合格不等于正式多电极池可用，正式实验的六个位点仍须通过独立刺激单元检查；冲突时报告具体电极及unit编号并停止，不自动替换邻居或取消检查。
 
@@ -222,6 +230,7 @@ run_dir/
         probe_metrics.json
         raster.{png,pdf,svg}
     probe_summary.{csv,png,pdf,svg}
+    probe_unit_summary.{json,csv}
     selected_formal_sites.yaml
   raw_data/spatiotemporal/
     block_meta.yaml
@@ -254,7 +263,7 @@ run_dir/
 - `data_template.md`：CFG微米坐标、H5映射校验、全局帧换算与run审计表。
 - `stim_pool_routing_limits.md`：unique stim units、DAC0/1、仅prev/current快切；settle wait默认50ms只是初始值，需要用现场测量值替换，未做真实A/B验证。
 - `pre_experiment_automation.md`：离线完成burst、完整网络、出入度、空间互斥候选及低出度参数复核记录，再人工审阅中心输入；不自动衔接硬件。Probe响应定义按本次方案覆盖默认3–50ms/2倍局部基线规则，保留严格>60%接续门槛。
-- `analysis_template.md`：Probe保存0–2ms均值及通用>=200标记，同时按本次方案保存0–3ms严格>300及10–50ms判定；正式数据检查pipeline按用户要求暂缓。
+- `analysis_template.md`：Probe保存0–2ms均值及通用>=200标记、0–3ms计数及>300参考标记；按用户2026-10-11明确要求，伪迹只用于送达排查，成功判定仅使用10–50ms群体响应。正式数据检查pipeline按用户要求暂缓。
 - `coding_style.md`与`paper.md`：结果自动输出、参数快照、日志与进度、600dpi PNG及矢量图；无标题和背景网格。
 
 公共burst检测直接复用既有 `spont_burst_outdegree_handoff/spont_analysis/burst.py`，文件内容不改动。基线导入也可使用人工已复核的start_sec,end_sec CSV，避免强行使用不适合当前culture的默认burst参数。公共接口索引见 `analysis/analysis_utils.md`。

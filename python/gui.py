@@ -41,7 +41,7 @@ def launch(system, stimulation, args):
     formula = tk.StringVar(value={None: "待明确", "mean_plus_3sd": "均值 + 3倍标准差", "mean_plus_3variance": "均值 + 3倍方差"}[stimulation["probe"]["threshold_rule"]])
     interval = tk.StringVar(value="第二脉冲结束后1秒" if stimulation["formal"]["temporal_interval_mode"] == "after_second" else "第一脉冲间隔1秒")
     quick = tk.BooleanVar(value=args.quick)
-    probe_only = tk.BooleanVar(value=args.probe_only)
+    probe_only = tk.BooleanVar(value=True)
     options = ttk.Frame(header)
     options.grid(row=5, column=0, columnspan=3, sticky="w", padx=6, pady=6)
     ttk.Combobox(options, textvariable=mode, values=["模拟", "真实硬件"], state="readonly", width=12).pack(side="left", padx=4)
@@ -49,11 +49,8 @@ def launch(system, stimulation, args):
     ttk.Combobox(options, textvariable=interval, values=["第二脉冲结束后1秒", "第一脉冲间隔1秒"], state="readonly", width=20).pack(side="left", padx=4)
     ttk.Checkbutton(options, text="缩短模拟数据", variable=quick).pack(side="left", padx=4)
     start_text = tk.StringVar(value="开始Probe" if probe_only.get() else "开始实验")
-    def update_scope_label():
-        start_text.set("开始Probe" if probe_only.get() else "开始实验")
-    ttk.Checkbutton(header, text="仅运行 Probe（完成后停止）", variable=probe_only,
-                    command=update_scope_label).grid(row=6, column=0, columnspan=3, sticky="w", padx=10)
-    ttk.Label(header, text="不勾选时，Probe通过后自动进入正式实验。" ).grid(
+    ttk.Label(header, text="本窗口仅运行Probe，完成后停止。" ).grid(row=6, column=0, columnspan=3, sticky="w", padx=10)
+    ttk.Label(header, text="正式实验须审阅Probe结果后，用终端--formal-from另行启动。" ).grid(
         row=7, column=0, columnspan=3, sticky="w", padx=10, pady=3)
     status = tk.StringVar(value="待启动；真实输入可暂时留空")
     ttk.Label(root, textvariable=status, wraplength=1000).pack(fill="x", padx=12)

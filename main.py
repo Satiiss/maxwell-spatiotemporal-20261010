@@ -148,13 +148,24 @@ def make_plan(system, stimulation, probe_only=False):
 
 
 def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quick=False, compile_cpp=False,
-            probe_only=False):
+            probe_only=True, formal_from=None):
     from python.utils.progress import Reporter
     from python.utils.persistence import atomic_json
     import yaml
     import copy
     system, stimulation = copy.deepcopy(system), copy.deepcopy(stimulation)
-    system["experiment"]["execution_scope"] = "probe_only" if probe_only else "full"
+    if formal_from is not None:
+        probe_only = False
+    elif not probe_only:
+        raise ValueError("Probe和正式实验必须分开启动；正式实验请提供--formal-from Probe结果目录")
+    if stimulation["probe"].get("enforce_artifact_qc"):
+        logging.warning("按最新Probe要求，伪迹仅作诊断；本次覆盖旧enforce_artifact_qc为false并保存快照")
+    stimulation["probe"]["enforce_artifact_qc"] = False
+    system["experiment"]["execution_scope"] = "probe_only" if probe_only else "formal_only"
+    handoff = None
+    if formal_from is not None:
+        from python.probe_handoff import load_probe_handoff
+        handoff = load_probe_handoff(formal_from, system, stimulation, hardware=mode == "hardware")
     reporter = reporter or Reporter()
     run_dir = create_run(system)
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
@@ -167,6 +178,8 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
         check_environment(hardware=mode == "hardware" and not dry_run, api_parent=system["maxwell"].get("api_parent"))
         validate(system, stimulation, hardware=mode == "hardware" and not dry_run, probe_only=probe_only)
         plan = make_plan(system, stimulation, probe_only=probe_only)
+        if formal_from is not None:
+            plan.update(execution_scope="formal_only", probe_trial_count=0, source_probe_run=str(Path(formal_from).resolve()))
         atomic_json(run_dir / "experiment_plan.json", plan)
         if probe_only:
             logging.info("run=%s | 仅运行Probe，完成后停止；不会进入正式实验", run_dir)
@@ -193,7 +206,8 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
             from python.mock_backend import MockBackend
             backend = MockBackend(system, reporter)
         from python.experiment_runner import ExperimentRunner
-        runner = ExperimentRunner(system, stimulation, run_dir, backend, reporter, probe_only=probe_only)
+        runner = ExperimentRunner(system, stimulation, run_dir, backend, reporter,
+                                  probe_only=probe_only, formal_handoff=handoff)
         runner.run()
         return run_dir
     except BaseException as exc:
@@ -215,18 +229,22 @@ def main():
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--gui", action="store_true")
     parser.add_argument("--build-cpp", action="store_true")
-    parser.add_argument("--probe-only", action="store_true", help="仅执行基线准备和Probe，完成后收尾停止，不进入正式实验")
+    stage = parser.add_mutually_exclusive_group()
+    stage.add_argument("--probe-only", action="store_true", help="仅执行Probe（默认）；完成后停止，待人工审阅")
+    stage.add_argument("--formal-from", type=Path, help="独立启动正式实验，读取已审阅的Probe结果目录，不重复Probe")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
         system, stimulation = load_configuration(args.config_dir)
+        if args.formal_from and (args.gui or (system["gui"]["enabled"] and not args.headless and not args.dry_run)):
+            raise ValueError("正式实验请使用--headless --formal-from；GUI仅运行Probe")
         if args.gui or (system["gui"]["enabled"] and not args.headless and not args.dry_run):
             from python.gui import launch
             return launch(system, stimulation, args)
         if args.mode == "hardware" and not args.enable_hardware and not args.dry_run:
             raise ValueError("真实执行请显式使用 --mode hardware --enable-hardware")
         output = execute(system, stimulation, args.mode, dry_run=args.dry_run, quick=args.quick,
-                         compile_cpp=args.build_cpp, probe_only=args.probe_only)
+                         compile_cpp=args.build_cpp, probe_only=args.formal_from is None, formal_from=args.formal_from)
         print(f"运行结果目录: {output.resolve()}")
         return 0
     except KeyboardInterrupt:

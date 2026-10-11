@@ -102,6 +102,7 @@ class SoftwareChecks(unittest.TestCase):
 
     def test_artifact_count_300_is_not_above_300(self):
         cfg = copy.deepcopy(self.stimulation["probe"])
+        cfg["enforce_artifact_qc"] = True  # Optional generic API gate, not this experiment's rule.
         cfg["threshold_rule"] = "mean_plus_3sd"
         times = np.r_[1 + np.linspace(.0001, .0029, 300), 1.02]
         session = SimpleNamespace(times=times, duration_sec=3)
@@ -207,6 +208,7 @@ class SoftwareChecks(unittest.TestCase):
     def test_probe_only_records_all_sites_without_formal_stimulation(self):
         self.system["mock"]["baseline_duration_override_sec"] = 40
         self.stimulation["probe"]["threshold_rule"] = "mean_plus_3variance"
+        self.stimulation["probe"]["enforce_artifact_qc"] = True  # Existing user's YAML remains accepted.
         reporter = Reporter()
         with tempfile.TemporaryDirectory(dir=ROOT / "data") as directory:
             backend = MockBackend(self.system, reporter)
@@ -242,11 +244,14 @@ class SoftwareChecks(unittest.TestCase):
             self.assertFalse((path / "raw_data").exists())
             state = json.loads((path / "pre_experiment/workflow_state.json").read_text())
             self.assertEqual(state["stage"], "PROBE_COMPLETE")
+            self.assertFalse(runner.stimulation["probe"]["enforce_artifact_qc"])
+            self.assertTrue(self.stimulation["probe"]["enforce_artifact_qc"])
 
-    def test_full_run_still_continues_after_probe(self):
+    def test_formal_run_uses_handoff_and_never_repeats_probe(self):
         with tempfile.TemporaryDirectory(dir=ROOT / "data") as directory:
             backend = MagicMock()
-            runner = ExperimentRunner(self.system, self.stimulation, directory, backend, Reporter())
+            runner = ExperimentRunner(self.system, self.stimulation, directory, backend, Reporter(),
+                                      probe_only=False, formal_handoff=(self.units, {"source_probe_run": "reviewed"}))
             runner.initialize = MagicMock()
             runner.prepare_baseline = MagicMock()
             runner.probes = MagicMock()
@@ -254,9 +259,53 @@ class SoftwareChecks(unittest.TestCase):
                 runner.result = dict(status="complete")
             runner.formal = MagicMock(side_effect=formal)
             runner.run()
-            runner.probes.assert_called_once()
+            runner.probes.assert_not_called()
+            runner.prepare_baseline.assert_not_called()
             runner.formal.assert_called_once()
             backend.shutdown.assert_called_once()
+
+    def test_automatic_probe_to_formal_path_is_rejected(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / "data") as directory:
+            with self.assertRaisesRegex(ValueError, "禁止自动衔接"):
+                ExperimentRunner(self.system, self.stimulation, directory, MagicMock(), Reporter(), probe_only=False)
+
+    def test_no_artifact_gate_in_current_probe_definition(self):
+        cfg = copy.deepcopy(self.stimulation["probe"])
+        cfg.update(threshold_rule="mean_plus_3variance", enforce_artifact_qc=False)
+        onsets = np.arange(10, dtype=float) + 1
+        times = np.r_[onsets[:7] + .02, onsets + .001]
+        session = SimpleNamespace(times=np.sort(times), duration_sec=12)
+        trials, summary = evaluate_probe(session, onsets, dict(window_ms=40, mean=0, variance=0, sd=0), cfg)
+        self.assertEqual(summary["success_trials"], 7)
+        self.assertTrue(summary["eligible"])
+        self.assertFalse(summary["artifact_file_valid"])
+        self.assertTrue(all(not t["artifact_valid"] for t in trials))
+
+    def test_completed_probe_with_insufficient_units_requires_review(self):
+        self.system["mock"]["baseline_duration_override_sec"] = 40
+        self.stimulation["probe"]["threshold_rule"] = "mean_plus_3variance"
+        reporter = Reporter()
+        with tempfile.TemporaryDirectory(dir=ROOT / "data") as directory:
+            backend = MockBackend(self.system, reporter)
+            def insufficient(session, onsets, background, cfg):
+                trials, summary = evaluate_probe(session, onsets, background, cfg)
+                summary["eligible"] = False
+                return trials, summary
+            runner = ExperimentRunner(self.system, self.stimulation, directory, backend, reporter)
+            with patch("python.experiment_runner.unit_map"), patch("python.experiment_runner.raster"), \
+                    patch("python.experiment_runner.summary_table"), \
+                    patch("python.experiment_runner.evaluate_probe", side_effect=insufficient), \
+                    patch.object(runner, "formal") as formal:
+                runner.run()
+            formal.assert_not_called()
+            result = json.loads((Path(directory) / "experiment_result.json").read_text())
+            self.assertEqual(result["status"], "probe_review_required")
+            self.assertEqual(result["probe_trial_count"], 240)
+            self.assertFalse(result["ready_for_formal"])
+            self.assertEqual(result["selected_formal_units"], [])
+            report = json.loads((Path(directory) / "pre_experiment/probe_unit_summary.json").read_text())
+            self.assertEqual(len(report), 6)
+            self.assertTrue(all(u["valid_electrode_count"] == 0 for u in report))
 
     def test_probe_only_failure_still_shuts_down_without_formal(self):
         with tempfile.TemporaryDirectory(dir=ROOT / "data") as directory:
