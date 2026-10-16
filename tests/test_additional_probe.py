@@ -129,6 +129,58 @@ class AdditionalProbeChecks(unittest.TestCase):
         self.assertEqual({r["unit_id"] for r in rows}, {f"candidate_{i:02d}" for i in range(7, 11)})
         self.assertTrue(all(int(r["all_trials"]) == 10 for r in rows))
 
+    def test_centers_only_assigns_new_numbers_above_ten_and_preserves_inputs(self):
+        old = build_local_units(self.mapping, self.centers[:2], 52.5, additional=True, ranks=[9, 10])
+        write_csv(self.source / "pre_experiment/candidate_sites.csv", [dict(unit_id=u["unit_id"],
+            electrodes=";".join(map(str, u["electrodes"]))) for u in old])
+        before = {p: sha256(p) for p in self.source.rglob("*") if p.is_file()}
+        with patch("tools.prepare_additional_probe.ROOT", self.root):
+            output = prepare(self.source, centers=self.centers[2:])
+        system, stimulation = load_configuration(output)
+        plan = json.loads((output / "additional_probe_plan.json").read_text())
+        self.assertEqual(system["manual_inputs"]["candidate_ranks"], [11, 12, 13, 14])
+        self.assertEqual(system["manual_inputs"]["candidate_centers"], self.centers[2:])
+        self.assertEqual(plan["selection_source"], "manual_centers")
+        self.assertEqual(stimulation["probe"]["min_success_trials"], 6)
+        self.assertEqual(system["manual_inputs"]["network_review_record"], str(output / "additional_probe_plan.json"))
+        self.assertEqual(validate_additional_probe(system, stimulation), plan["units"])
+        self.assertEqual(before, {p: sha256(p) for p in self.source.rglob("*") if p.is_file()})
+
+    def test_centers_only_follows_latest_source_chain_and_inherits_policy(self):
+        latest = self.root / "latest"
+        (latest / "config_snapshot").mkdir(parents=True)
+        system = copy.deepcopy(self.system)
+        system["manual_inputs"].update(candidate_centers=self.centers[2:4], candidate_ranks=[7, 8])
+        stimulation = copy.deepcopy(self.stim)
+        stimulation["probe"]["min_success_trials"] = 7
+        for name, content in (("system", system), ("stimulation", stimulation)):
+            (latest / f"config_snapshot/{name}.yaml").write_text(yaml.safe_dump(content), encoding="utf-8")
+        atomic_json(latest / "source_inputs.json", dict(cfg=str(self.cfg), cfg_sha256=sha256(self.cfg)))
+        atomic_json(latest / "experiment_result.json", dict(status="probe_review_required", formal_started=False, synthetic=True))
+        units = build_local_units(self.mapping, self.centers[2:4], 52.5, additional=True, ranks=[7, 8])
+        write_csv(latest / "pre_experiment/candidate_sites.csv", [dict(unit_id=u["unit_id"],
+            electrodes=";".join(map(str, u["electrodes"]))) for u in units])
+        with patch("tools.prepare_additional_probe.ROOT", self.root):
+            output = prepare(latest, centers=self.centers[4:])
+            for center in (self.centers[0], self.centers[2]):
+                with self.assertRaisesRegex(ValueError, "重复"):
+                    prepare(latest, centers=[center])
+        prepared, policy = load_configuration(output)
+        self.assertEqual(prepared["manual_inputs"]["candidate_ranks"], [9, 10])
+        self.assertEqual(prepared["manual_inputs"]["additional_probe_from"], str(latest))
+        self.assertEqual(policy["probe"]["min_success_trials"], 7)
+
+    def test_centers_only_rejects_invalid_selection_before_writing_config(self):
+        with patch("tools.prepare_additional_probe.ROOT", self.root):
+            for centers in ([], [999999], [self.centers[2]] * 2, [self.centers[0]]):
+                with self.subTest(centers=centers), self.assertRaises(ValueError):
+                    prepare(self.source, centers=centers)
+            with self.assertRaises(ValueError):
+                prepare(self.source)
+            with self.assertRaises(ValueError):
+                prepare(self.source, self.root / "unused.json", centers=self.centers[2:])
+        self.assertFalse((self.root / "config").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,29 @@ from .site_selection import build_local_units
 from .utils.persistence import sha256
 
 
+def read_probe_history(source, cfg_sha256):
+    """Collect planned sites and unit IDs across a validated, same-CFG source chain."""
+    source = Path(source).resolve()
+    used_sites, used_ids, visited = set(), set(), set()
+    while True:
+        if source in visited or len(visited) >= 20:
+            raise ValueError("补测来源链循环或过长")
+        visited.add(source)
+        lineage = json.loads((source / "source_inputs.json").read_text(encoding="utf-8"))
+        if lineage["cfg_sha256"] != cfg_sha256:
+            raise ValueError("补测来源链CFG不一致")
+        with (source / "pre_experiment/candidate_sites.csv").open(encoding="utf-8-sig", newline="") as handle:
+            for row in csv.DictReader(handle):
+                used_ids.add(row["unit_id"])
+                used_sites.update(int(e) for e in row["electrodes"].split(";") if e)
+        saved = yaml.safe_load((source / "config_snapshot/system.yaml").read_text(encoding="utf-8"))
+        previous = saved["manual_inputs"].get("additional_probe_from") if saved["manual_inputs"].get("additional_probe") else None
+        if not previous:
+            break
+        source = Path(previous).resolve()
+    return used_sites, used_ids
+
+
 def validate_additional_probe(system, stimulation, hardware=False):
     manual = system["manual_inputs"]
     if not manual.get("additional_probe"):
@@ -49,24 +72,7 @@ def validate_additional_probe(system, stimulation, hardware=False):
     units = build_local_units(parse_cfg(cfg), manual["candidate_centers"],
         manual["minimum_center_distance_pitches"] * manual["electrode_pitch_um"],
         additional=True, ranks=ranks)
-    used_sites, used_ids = set(), set()
-    visited = set()
-    while True:
-        if source in visited or len(visited) >= 20:
-            raise ValueError("补测来源链循环或过长")
-        visited.add(source)
-        lineage = json.loads((source / "source_inputs.json").read_text(encoding="utf-8"))
-        if lineage["cfg_sha256"] != inputs["cfg_sha256"]:
-            raise ValueError("补测来源链CFG不一致")
-        with (source / "pre_experiment/candidate_sites.csv").open(encoding="utf-8-sig", newline="") as handle:
-            for row in csv.DictReader(handle):
-                used_ids.add(row["unit_id"])
-                used_sites.update(int(e) for e in row["electrodes"].split(";") if e)
-        saved = yaml.safe_load((source / "config_snapshot/system.yaml").read_text(encoding="utf-8"))
-        previous = saved["manual_inputs"].get("additional_probe_from") if saved["manual_inputs"].get("additional_probe") else None
-        if not previous:
-            break
-        source = Path(previous).resolve()
+    used_sites, used_ids = read_probe_history(source, inputs["cfg_sha256"])
     overlap = used_sites.intersection(e for unit in units for e in unit["electrodes"])
     if overlap or used_ids.intersection(u["unit_id"] for u in units):
         raise ValueError(f"补测重复旧候选编号或电极：{sorted(overlap)}；拒绝重复刺激")

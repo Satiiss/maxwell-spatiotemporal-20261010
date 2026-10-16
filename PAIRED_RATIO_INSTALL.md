@@ -63,5 +63,5 @@ python -B -m unittest discover -s tests -p 'test_additional_probe.py' -v
 ```
 
 已存在本地同名分支时使用`git switch additional-probe-six-of-ten`和`git pull --ff-only`。
-应有5项补测测试通过，再按ADDITIONAL_PROBE.md生成独立配置和dry-run。
+应有8项补测测试通过，再按ADDITIONAL_PROBE.md生成独立配置和dry-run。
 分支只提交Python/Markdown，不修改现场YAML、CFG、H5，不自动刺激。

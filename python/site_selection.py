@@ -10,9 +10,10 @@ def build_local_units(mapping, centers, minimum_distance_um, *, additional=False
     if not lower <= len(centers) <= upper or len(set(centers)) != len(centers):
         raise ValueError(f"请提供{lower}–{upper}个不同的手动候选中心电极ID")
     ranks = list(range(1, len(centers) + 1)) if ranks is None else list(ranks)
-    if (len(ranks) != len(centers) or any(isinstance(r, bool) or not isinstance(r, int) or not 1 <= r <= 10 for r in ranks)
+    if (len(ranks) != len(centers) or any(isinstance(r, bool) or not isinstance(r, int)
+            or r < 1 or (not additional and r > 10) for r in ranks)
             or len(set(ranks)) != len(ranks)):
-        raise ValueError("候选rank必须为1–10的不同整数，且与中心逐项对应")
+        raise ValueError("候选编号必须为不同正整数且与中心逐项对应；初次候选rank限1–10")
     positions = {r["electrode"]: r for r in mapping}
     if any(c not in positions for c in centers):
         raise ValueError("候选中心不属于当前CFG，不允许用附近电极自动替换")
