@@ -2,6 +2,10 @@
 
 本规则只用于本项目。更新代码不自动修改实验配置、选择电极或启动刺激。
 
+2026-10-16补充：本地补测补丁支持显式`probe.min_success_trials: 6`（完整10次至少6次）。
+未设置该字段时仍按原严格`>0.60`要求7/10。新增unit的来源核对、独立配置和预演见
+[ADDITIONAL_PROBE.md](ADDITIONAL_PROBE.md)。补测代码位于独立分支`additional-probe-six-of-ten`；main仍保留原版本。分支安装见下文。
+
 在已有Linux项目根目录和maxlab环境中先备份当前配置，再更新：
 
 ```bash
@@ -44,3 +48,20 @@ Probe完成后停止，达到至少3个unit各有2个有效电极后再人工审
 
 如只复核旧Probe数据，使用`tools/review_probe_paired_ratio.py --run <源Probe目录>`。
 复核结果另存，不覆盖旧评分，也不能作为`--formal-from`来源。
+
+
+## 补测分支更新
+
+先备份现场配置并检查工作区；若有代码修改或已经手动装ZIP补丁，保留差异，勿使用reset/强制覆盖。
+在干净代码工作区执行：
+
+```bash
+git status --short
+git fetch origin
+git switch --track origin/additional-probe-six-of-ten
+python -B -m unittest discover -s tests -p 'test_additional_probe.py' -v
+```
+
+已存在本地同名分支时使用`git switch additional-probe-six-of-ten`和`git pull --ff-only`。
+应有5项补测测试通过，再按ADDITIONAL_PROBE.md生成独立配置和dry-run。
+分支只提交Python/Markdown，不修改现场YAML、CFG、H5，不自动刺激。

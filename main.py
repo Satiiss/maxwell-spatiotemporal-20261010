@@ -28,6 +28,7 @@ def load_configuration(directory):
     # User-entered relative paths are relative to the configuration directory.
     paths = [(system["electrode_map"], "cfg_path"), (system["manual_inputs"], "baseline_h5"),
              (system["manual_inputs"], "baseline_bursts_csv"), (system["manual_inputs"], "network_review_record"),
+             (system["manual_inputs"], "additional_probe_from"),
              (system["maxwell"], "api_parent"), (system["maxwell"], "maxlab_root")]
     for mapping, key in paths:
         value = mapping.get(key)
@@ -66,6 +67,11 @@ def create_run(system):
 
 
 def validate(system, stimulation, hardware=False, probe_only=False):
+    from analysis.utils.probe import minimum_probe_successes
+    minimum_probe_successes(stimulation["probe"])
+    if system["manual_inputs"].get("additional_probe"):
+        from python.additional_probe import validate_additional_probe
+        validate_additional_probe(system, stimulation, hardware=hardware)
     if stimulation['probe']['threshold_rule']=='paired_pre_stim_ratio':
         from analysis.utils.probe import validate_paired_config
         validate_paired_config(stimulation['probe'])
@@ -109,7 +115,7 @@ def validate(system, stimulation, hardware=False, probe_only=False):
             raise ValueError("请填写实际electrode_map.cfg_path；当前允许留空生成代码")
         if not system["culture"].get("id") or system["culture"].get("div") is None:
             raise ValueError("真实实验前须填写culture.id与culture.div")
-        if len(system["manual_inputs"]["candidate_centers"]) not in (5, 6):
+        if not system["manual_inputs"].get("additional_probe") and len(system["manual_inputs"]["candidate_centers"]) not in (5, 6):
             raise ValueError("真实实验前须填写5–6个手动审阅的候选中心电极")
         if stimulation["probe"]["threshold_rule"] not in ("mean_plus_3sd", "mean_plus_3variance", "paired_pre_stim_ratio"):
             raise ValueError("probe.threshold_rule尚未明确：选择三倍标准差、三倍方差或paired_pre_stim_ratio")
@@ -134,8 +140,12 @@ def build_cpp(system):
 
 def make_plan(system, stimulation, probe_only=False):
     if probe_only:
+        from analysis.utils.probe import minimum_probe_successes
         centers = system["manual_inputs"]["candidate_centers"]
         return dict(execution_scope="probe_only", stages=[], formal_trial_count=0,
+                    min_success_trials=minimum_probe_successes(stimulation["probe"]),
+                    additional_probe=bool(system["manual_inputs"].get("additional_probe")),
+                    candidate_ranks=system["manual_inputs"].get("candidate_ranks"),
                     probe_order=stimulation["probe"].get("order", "sequential"),
                     formal_nominal_duration_sec=0,
                     raw_uncompressed_bytes_at_1024_channels_20khz=0,

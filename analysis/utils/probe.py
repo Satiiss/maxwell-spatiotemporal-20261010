@@ -1,6 +1,7 @@
 """Window counts, non-burst background and deterministic site ranking."""
 from __future__ import annotations
 
+import math
 import numpy as np
 
 
@@ -45,7 +46,24 @@ def validate_paired_config(cfg):
         raise ValueError('response_to_baseline_ratio必须为有限正数')
 
 
+def minimum_probe_successes(cfg):
+    """Explicit inclusive trial count, or the legacy strict-fraction rule."""
+    trials = cfg.get("trials_per_electrode", 10)
+    if isinstance(trials, bool) or not isinstance(trials, (int, np.integer)) or trials < 1:
+        raise ValueError("trials_per_electrode必须为正整数")
+    minimum = cfg.get("min_success_trials")
+    if minimum is not None:
+        if isinstance(minimum, bool) or not isinstance(minimum, (int, np.integer)) or not 1 <= minimum <= trials:
+            raise ValueError("min_success_trials必须为1至总trial数之间的整数")
+        return int(minimum)
+    threshold = float(cfg["success_fraction_threshold"])
+    if not math.isfinite(threshold) or not 0 <= threshold < 1:
+        raise ValueError("success_fraction_threshold必须在[0,1)内")
+    return math.floor(threshold * trials) + 1
+
+
 def evaluate_probe(session, stim_times, baseline, cfg):
+    minimum = minimum_probe_successes(cfg)
     stim_times = np.asarray(stim_times, float)
     lo, hi = map(float, cfg["response_window_ms"])
     paired = cfg['threshold_rule'] == 'paired_pre_stim_ratio'
@@ -85,10 +103,14 @@ def evaluate_probe(session, stim_times, baseline, cfg):
                        paired_baseline_window_ms=[before_lo,before_hi], response_to_baseline_ratio=ratio)
     successful = sum(row["success"] for row in trials)
     fraction = successful / len(trials)
+    site_success = (len(trials) == cfg.get("trials_per_electrode", 10) and successful >= minimum
+                    if cfg.get("min_success_trials") is not None
+                    else fraction > cfg["success_fraction_threshold"])
     artifact_file_valid = float(artifacts.mean()) > cfg["artifact_min_spikes"]
     summary = dict(success_trials=successful, all_trials=len(trials), success_fraction=float(fraction),
-                   eligible=bool(fraction > cfg["success_fraction_threshold"] and
+                   eligible=bool(site_success and
                                  (artifact_file_valid or not cfg["enforce_artifact_qc"])),
+                   min_success_trials=minimum,
                    artifact_0_3ms_mean=float(artifacts.mean()), artifact_0_3ms_total=int(artifacts.sum()),
                    artifact_0_2ms_mean=float(generic_artifacts.mean()),
                    generic_delivery_valid=bool(generic_artifacts.mean() >= 200),

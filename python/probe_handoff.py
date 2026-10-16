@@ -10,6 +10,7 @@ import yaml
 from .site_selection import build_local_units
 from .utils.persistence import sha256
 from analysis.utils.io import parse_cfg
+from analysis.utils.probe import minimum_probe_successes
 
 
 def load_probe_handoff(source, system, stimulation, hardware=False):
@@ -21,6 +22,9 @@ def load_probe_handoff(source, system, stimulation, hardware=False):
         raise ValueError("禁止用模拟Probe结果启动真实正式实验")
     source_system = yaml.safe_load((source / "config_snapshot/system.yaml").read_text(encoding="utf-8"))
     source_stim = yaml.safe_load((source / "config_snapshot/stimulation.yaml").read_text(encoding="utf-8"))
+    minimum = minimum_probe_successes(stimulation["probe"])
+    if minimum_probe_successes(source_stim["probe"]) != minimum:
+        raise ValueError("当前最少有效trial数与源Probe不一致")
     if str(source_system["culture"]["id"]) != str(system["culture"]["id"]):
         raise ValueError("当前培养物编号与Probe培养物不一致")
     if any(source_system["maxwell"][k] != system["maxwell"][k] for k in ("device", "well")):
@@ -50,7 +54,9 @@ def load_probe_handoff(source, system, stimulation, hardware=False):
     mapping = parse_cfg(cfg)
     manual = system["manual_inputs"]
     original_units = build_local_units(mapping, source_system["manual_inputs"]["candidate_centers"],
-                                      manual["minimum_center_distance_pitches"] * manual["electrode_pitch_um"])
+        manual["minimum_center_distance_pitches"] * manual["electrode_pitch_um"],
+        additional=bool(source_system["manual_inputs"].get("additional_probe")),
+        ranks=source_system["manual_inputs"].get("candidate_ranks"))
     allowed = {u["unit_id"]: set(u["electrodes"]) for u in original_units}
     with (source / "pre_experiment/probe_summary.csv").open(encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
@@ -76,9 +82,9 @@ def load_probe_handoff(source, system, stimulation, hardware=False):
                 raise ValueError("正式电极不属于原Probe unit，或多个unit共享电极")
             row = metrics.get((unit_id, electrode))
             if (row is None or row["eligible"].lower() != "true" or row.get("status") != "complete"
-                    or int(row["all_trials"]) != 10 or int(row["success_trials"]) < 7):
-                raise ValueError(f"{unit_id}的电极{electrode}不满足完整10次Probe且至少7次有效")
-            if not 7 <= int(row["success_trials"]) <= 10 or not math.isclose(
+                    or int(row["all_trials"]) != 10 or int(row["success_trials"]) < minimum):
+                raise ValueError(f"{unit_id}的电极{electrode}不满足完整10次Probe且至少{minimum}次有效")
+            if not minimum <= int(row["success_trials"]) <= 10 or not math.isclose(
                     float(row["success_fraction"]), int(row["success_trials"]) / 10):
                 raise ValueError("Probe成功次数与响应概率不一致")
             valid_metrics.append(dict(electrode=electrode, success_fraction=float(row["success_fraction"]),

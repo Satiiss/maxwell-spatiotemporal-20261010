@@ -18,12 +18,15 @@
 | `utils/probe.py` | `baseline_distribution` | 同宽背景窗口，剔除任何与burst相交的窗口 |
 | `utils/probe.py` | `response_threshold` | 显式指定均值+3SD或均值+3方差 |
 | `utils/probe.py` | `validate_paired_config` | paired_pre_stim_ratio的前[-50,-10]ms、后[10,50]ms及有限正倍数校验 |
-| `utils/probe.py` | `evaluate_probe` | 逐trial表、位点汇总、严格>60%可用性；本实验enforce_artifact_qc固定false，伪迹仅诊断 |
+| `utils/probe.py` | `minimum_probe_successes` | 显式min_success_trials为含等号的次数门槛；缺省仍为严格fraction门槛 |
+| `utils/probe.py` | `evaluate_probe` | 逐trial表、位点汇总；显式次数门槛要求trial完整；伪迹仅诊断 |
 | `utils/probe.py` | `rank_units` | 有效电极数优先、其次响应概率，选3unit×2电极 |
 
 2026-10-14：新增可选`paired_pre_stim_ratio`。比较同次刺激前−50至−10ms与刺激后10至50ms的全部记录电极群体计数，后窗严格超过前窗1.5倍才成功；前窗为零时后窗至少1个spike才通过。不加伪计数、不自动剔除前窗内burst；此规则替代全局去burst背景阈值。前窗缺失则拒绝评估，不当作零。每trial保存前计数、前后rate和独立阈值；summary的全局response_threshold为null，另存trial阈值均值。离线比较入口为`tools/review_probe_paired_ratio.py`，原评分不覆盖，不能作为正式实验来源。
 
 此包实现实验前自发基线的burst/稳定延时出入度Map、候选建议，以及接续所需的Probe计算。完整正式响应数据质量分析、稳定延时Map、Consistency和ESRC按用户要求暂缓。新工具不依赖实验runner；离线入口 `tools/analyze_baseline.py` 负责文件归档和人工复核状态。
+
+2026-10-16：空间图统一使用CFG的左上角原点，X向右、Y向下；只调整绘图轴，不转换电极坐标或ID。此前自发网络图Y向上、Probe unit图Y向下，造成视觉上下镜像。Probe中心标签统一为`#rank: electrode ID`，与候选网络图对应。新增回归检查验证四张网络空间图与Probe unit图的坐标不变、Y轴方向一致。
 
 2026-10-10：新增H5/CFG契约和Probe API；复用既有burst模块。
 

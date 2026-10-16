@@ -113,6 +113,22 @@ class HandoffChecks(unittest.TestCase):
         self.assertTrue((output / "pre_experiment/probe_source_reference.json").is_file())
         self.assertEqual(len(list((output / "raw_data").rglob("*.raw.h5"))), 3)
 
+    def test_explicit_six_of_ten_handoff_matches_source_policy(self):
+        import csv
+        self.stimulation["probe"]["min_success_trials"] = 6
+        (self.source / "config_snapshot/stimulation.yaml").write_text(yaml.safe_dump(self.stimulation))
+        with (self.pre / "probe_summary.csv").open(encoding="utf-8-sig") as handle:
+            rows = list(csv.DictReader(handle))
+        for row in rows:
+            row.update(success_trials=6, success_fraction=.6)
+        write_csv(self.pre / "probe_summary.csv", rows)
+        units, _ = load_probe_handoff(self.source, self.system, self.stimulation)
+        self.assertEqual(len(units), 3)
+        changed = copy.deepcopy(self.stimulation)
+        changed["probe"]["min_success_trials"] = 7
+        with self.assertRaisesRegex(ValueError, "最少有效trial"):
+            load_probe_handoff(self.source, self.system, changed)
+
 
 if __name__ == "__main__":
     unittest.main()

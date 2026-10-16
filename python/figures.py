@@ -35,7 +35,7 @@ def unit_map(mapping, units, stem):
             row = positions[electrode]
             ax.scatter(row["x"], row["y"], s=12, marker="*" if electrode == unit.get("center") else "o", color=color)
         center = positions[unit.get("center", unit["electrodes"][0])]
-        ax.annotate(unit.get("unit_id", f"unit_{i+1}"), (center["x"], center["y"]), xytext=(2, 4), textcoords="offset points", fontsize=5)
+        ax.annotate(f"#{unit.get('rank', i+1)}: {center['electrode']}", (center["x"], center["y"]), xytext=(2, 4), textcoords="offset points", fontsize=5)
     xmin, xmax = ax.get_xlim()
     ymin, ymax = ax.get_ylim()
     length = 100.0

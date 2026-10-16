@@ -45,10 +45,12 @@ def render_network_figures(session, result, candidates, output, config, revision
             lo, hi = xy.min(axis=0), xy.max(axis=0)
             mid = (lo+hi)/2
             ax.set_xlim(mid[0] - .58*span[0], mid[0] + .58*span[0])
-            ax.set_ylim(mid[1] - .80*span[1], mid[1] + .58*span[1])
-            x, y = lo[0], mid[1] - .55*span[1]
+            # CFG coordinates have a top-left origin, matching the Probe unit map.
+            ax.set_ylim(mid[1] - .58*span[1], mid[1] + .80*span[1])
+            ax.invert_yaxis()
+            x, y = lo[0], mid[1] + .55*span[1]
             ax.plot([x, x+100], [y, y], color="#303C43", lw=1)
-            ax.text(x+50, y-.035*span[1], "100 um", ha="center", va="top")
+            ax.text(x+50, y+.035*span[1], "100 um", ha="center", va="top")
         return fig, ax
 
     def draw_stars(ax, include_electrode=False):

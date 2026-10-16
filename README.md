@@ -364,3 +364,6 @@ python -B tools/plot_probe_rasters.py --run data/20261011_152853_data --electrod
 红线为H5中的刺激时刻（0 ms），浅黄色为0–3 ms，浅蓝色为10–50 ms。录制未覆盖的区间用灰色斜纹标记，PSTH排除未完整录制的箱而不是当作零响应；覆盖情况写入 `trial_alignment.csv`。输出还保存 `psth.csv`、原逐trial指标副本、源文件信息、参数快照及分层进度日志。该命令只绘制已有spikes，不读取连续raw电压；若要确认实际电刺激波形，应另外读取原始电压。可视化不重新评分、不改筛选判据、不自动批准正式实验。
 
 “全部电极”指本次H5实际映射并记录的电极（现场为1020个），不能绘制未记录的芯片电极。电极图的行间距均匀，ID仅作为标签，不表示物理距离。多trial叠加图某段缺失时其他trial仍可能有数据，是否完整观察需查`trial_alignment.csv`；逐trial图会标记未录制范围。
+
+
+新增unit补测、显式6/10门槛及空间图方向修复：见[ADDITIONAL_PROBE.md](ADDITIONAL_PROBE.md)；分支安装见[PAIRED_RATIO_INSTALL.md](PAIRED_RATIO_INSTALL.md)。
