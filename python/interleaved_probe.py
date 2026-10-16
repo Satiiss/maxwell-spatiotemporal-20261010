@@ -76,6 +76,7 @@ def run_interleaved_probe(runner):
             continue
         directory = pre / "02_probe" / unit["unit_id"] / "interleaved_attempt_01"
         runner.start_segment(directory, unit["unit_id"] + "_interleaved", "02_stim", 4 * rounds)
+        runner.wait_probe_baseline()
         atomic_json(directory / "routing.json", dict(mode="unit_pool_fast", pool=pool,
             order=unit["electrodes"], global_frequency_hz=cfg["frequency_hz"],
             per_electrode_interval_sec=4 / cfg["frequency_hz"]))

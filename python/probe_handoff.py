@@ -36,6 +36,10 @@ def load_probe_handoff(source, system, stimulation, hardware=False):
                 "frequency_hz", "success_fraction_threshold"):
         if source_stim["probe"][key] != stimulation["probe"][key]:
             raise ValueError(f"当前Probe定义与源结果不一致: {key}")
+    if stimulation['probe']['threshold_rule']=='paired_pre_stim_ratio':
+        for key,default in [('paired_baseline_window_ms',[-50.,-10.]),('response_to_baseline_ratio',1.5)]:
+            if source_stim['probe'].get(key,default)!=stimulation['probe'].get(key,default):
+                raise ValueError(f'当前Probe定义与源结果不一致: {key}')
     for key in ("amplitude_mv", "pulse_width_us", "inter_phase_interval_us", "polarity"):
         if source_stim["protocol"][key] != stimulation["protocol"][key]:
             raise ValueError(f"当前刺激波形与Probe不一致: {key}")

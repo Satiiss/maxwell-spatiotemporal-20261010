@@ -9,6 +9,7 @@
 | `inspect_probe_results.py` | 只读检查Probe逐次响应与录制尾部 |
 | `review_probe_rate_variance.py` | 独立发放率方差对照 |
 | `plot_probe_rasters.py` | 从现有H5绘制毫秒级局部及刺激对齐图 |
+| `review_probe_paired_ratio.py` | 对旧Probe试算后10–50ms严格大于同次前−50至−10ms的1.5倍 |
 | `probe_rate_variance.py` | 发放率对照的辅助模块，由入口调用 |
 | `probe_raster_review.py` | 刺激对齐和局部绘图辅助模块，由入口调用 |
 
@@ -19,8 +20,12 @@ python -B tools/analyze_baseline.py --h5 /实际路径/data.raw.h5 --cfg /实际
 python -B tools/inspect_recording_settings.py --run data/20261011_152853_data
 python -B tools/inspect_probe_results.py --run data/20261011_152853_data
 python -B tools/review_probe_rate_variance.py --run data/20261011_152853_data
+python -B tools/review_probe_paired_ratio.py --run /实际路径/源Probe目录
 python -B tools/plot_probe_rasters.py --run data/20261011_152853_data --electrodes 23209
 ```
+
+配对复核使用同次前`[-50,-10)`ms与后`[10,50)`ms全部记录电极计数，严格后计数>1.5倍前计数。
+缺失前窗时标记incomplete_pre_window，结果另存，不能作为正式实验来源。新采集的启用与Git更新见根目录PAIRED_RATIO_INSTALL.md。
 
 绘图默认显示−10至50ms；`--window-ms -50 200`可扩展查看范围，去掉`--electrodes 23209`处理所有已完成位点。毫秒级图保存到新建的 `data/<时间>_probe_raster_review/<unit>/ele_<ID>/`，旧的整段`raster`不覆盖。
 

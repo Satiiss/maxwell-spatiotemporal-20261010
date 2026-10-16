@@ -64,7 +64,7 @@ spatiotemporal_20261010/
 | 中心距离 | 微米坐标欧氏距离严格>3×17.5µm |
 | unit | 中心+当前CFG中物理最近的3个电极；重复、重叠和不可路由情况报错 |
 | Probe | 每unit的4个单电极各10次、2Hz、400mV、单相300µs、先负后正；每次只连接当前电极 |
-| Probe响应 | [10,50)ms population spike count，与去burst的同宽40ms背景窗口分布比较 |
+| Probe响应 | [10,50)ms全部记录电极群体计数；显式启用paired_pre_stim_ratio时与同次[-50,-10)ms计数比较，否则使用旧的同宽非burst背景规则 |
 | Probe有效性 | 响应成功比例严格>0.60；10次至少7次。0–3ms伪迹仅作刺激送达排查指标 |
 | 正式选点 | 合格unit的有效电极数量优先，其次响应概率；选3unit×2电极 |
 | 正式刺激 | 每条件50trial；条件循环交叉，不连续重复同条件50次 |
@@ -85,8 +85,9 @@ spatiotemporal_20261010/
 
 - `mean_plus_3variance`：响应计数 > 同宽非burst背景均值 + 3×方差，保留方案字面公式。
 - `mean_plus_3sd`：响应计数 > 同宽非burst背景均值 + 3×标准差。
+- `paired_pre_stim_ratio`：同次刺激后`[10,50) ms`群体计数严格大于刺激前`[-50,-10) ms`计数的1.5倍；不加伪计数、不剔除前窗burst。完整10次中至少7次成功才合格，0–3ms仅诊断。配置与Git更新说明见[PAIRED_RATIO_INSTALL.md](PAIRED_RATIO_INSTALL.md)。
 
-真实执行前必须明确选择，程序不隐式将方差替换成标准差。模拟模式临时使用mean_plus_3sd，并在本次参数快照中标明；原始配置仍保持null。
+真实执行前必须明确选择，程序不隐式将方差替换成标准差。模拟模式临时使用mean_plus_3sd，并在本次参数快照中标明；原始配置仍保持null。配对规则使用`--headless`终端入口；当前GUI尚无此选项，不用于该规则。
 
 用户已确认 `formal.temporal_interval_mode: after_second`：一对时序刺激的第二个双相脉冲完整结束后，等待1s，再开始下一对。因此第一脉冲起始间隔为dt+第二双相脉冲总时长+1s；单相300µs、相间隔0时，总时长为600µs。每个固定dt循环交叉12个有向电极对，共50轮、600trial，全部完成后休息5min，再进入下一个dt。`onset_to_onset`仅保留为其他协议的可配置选项，不用于本次确认的方案。
 
@@ -323,6 +324,14 @@ python -B main.py --mode hardware --enable-hardware --headless \
 公共burst检测直接复用既有 `spont_burst_outdegree_handoff/spont_analysis/burst.py`，文件内容不改动。基线导入也可使用人工已复核的start_sec,end_sec CSV，避免强行使用不适合当前culture的默认burst参数。公共接口索引见 `analysis/analysis_utils.md`。
 
 ## 软件检查与范围
+
+### 可选：Probe前后40ms的1.5倍判据
+
+2026-10-14按用户要求新增。配置`probe.threshold_rule: paired_pre_stim_ratio`、`paired_baseline_window_ms: [-50.0, -10.0]`、`response_window_ms: [10.0, 50.0]`、`response_to_baseline_ratio: 1.5`。每次后窗群体计数严格`>1.5 × 同次前窗群体计数`才为成功，完整10次中至少7次通过。两窗等宽，计数比较等价于发放率比较。前窗内burst不额外剔除；该规则使用同次刺激前背景，替代整段去burst的均值/方差阈值。前窗计数0时后窗0不成功，后窗至少1个计数才成功，不加平滑或额外倍数。0–3ms伪迹仍只作诊断。
+
+先对旧Probe独立离线复核：`python -B tools/review_probe_paired_ratio.py --run data/20261011_152853_data`。只读原H5的spikes与实际刺激事件，核对旧逐次计数，另存`data/<时间>_paired_ratio_review`中的逐次表、位点表、unit表、config、日志和时间记录；不修改旧结果、不连接设备、不刺激，不提供formal-from来源。缺失完整刺激前窗口时标记`incomplete_pre_window`，不能按0背景评估。
+
+新采集显式启用该规则后，会在首发Probe前保持录制100ms以覆盖前窗；电极顺序、每电极10次、2Hz及波形不变。正式交接额外校验配对窗口与1.5倍参数一致。默认配置仍不自动选择判据，需在本机配置中显式填写。
 
 ```bash
 python -m unittest discover -s tests -v

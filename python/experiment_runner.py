@@ -113,6 +113,12 @@ class ExperimentRunner:
         self.state("RECORD_SEGMENT", block=block, phase=phase, directory=str(directory))
         return self.current_log
 
+    def wait_probe_baseline(self):
+        if self.stimulation['probe']['threshold_rule']=='paired_pre_stim_ratio':
+            self.reporter.wait(.1, 'Probe刺激前背景录制', realtime=self.backend.realtime)
+            if not self.backend.realtime:
+                self.backend.advance(.1)
+
     def finish_segment(self, expected_trials=0):
         log = self.current_log
         path = self.backend.finish_segment()
@@ -269,6 +275,7 @@ class ExperimentRunner:
                         self.reporter.emit("Probe位点评估", 1, 1, **summary)
                         break
                     self.start_segment(directory, unit["unit_id"] + f"_ele{electrode}", "02_stim", rounds)
+                    self.wait_probe_baseline()
                     atomic_json(directory / "routing.json", dict(mode="single_connect", pool=pool))
                     action = None
                     deadline = None

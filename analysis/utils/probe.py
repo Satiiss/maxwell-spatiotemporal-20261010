@@ -35,24 +35,54 @@ def response_threshold(baseline, rule):
     raise ValueError("请在probe.threshold_rule中明确三倍标准差或三倍方差；禁止隐式替换")
 
 
+def validate_paired_config(cfg):
+    before = np.asarray(cfg.get('paired_baseline_window_ms', [-50., -10.]), dtype=float)
+    after = np.asarray(cfg['response_window_ms'], dtype=float)
+    ratio = float(cfg.get('response_to_baseline_ratio', 1.5))
+    if before.shape!=(2,) or after.shape!=(2,) or not np.array_equal(before,[-50.,-10.]) or not np.array_equal(after,[10.,50.]):
+        raise ValueError('paired_pre_stim_ratio要求前窗[-50,-10]ms、后窗[10,50]ms')
+    if not np.isfinite(ratio) or ratio<=0:
+        raise ValueError('response_to_baseline_ratio必须为有限正数')
+
+
 def evaluate_probe(session, stim_times, baseline, cfg):
     stim_times = np.asarray(stim_times, float)
     lo, hi = map(float, cfg["response_window_ms"])
-    if not np.isclose(hi - lo, baseline["window_ms"]):
+    paired = cfg['threshold_rule'] == 'paired_pre_stim_ratio'
+    if not paired and not np.isclose(hi - lo, baseline["window_ms"]):
         raise ValueError("背景与响应窗口宽度不一致，必须重算同宽基线分布")
     if not len(stim_times) or stim_times.min() < 0 or stim_times.max() + hi / 1000 > session.duration_sec:
         raise ValueError("刺激窗口超出H5录制范围")
     artifacts = count_windows(session.times, stim_times, 0.003)
     generic_artifacts = count_windows(session.times, stim_times, 0.002)
     response = count_windows(session.times, stim_times + lo / 1000, (hi - lo) / 1000)
-    threshold = response_threshold(baseline, cfg["threshold_rule"])
-    success = response > threshold
+    if paired:
+        validate_paired_config(cfg)
+        before_lo, before_hi = map(float, cfg.get('paired_baseline_window_ms', [-50., -10.]))
+        ratio = float(cfg.get('response_to_baseline_ratio', 1.5))
+        if not np.isfinite([before_lo, before_hi, ratio]).all() or ratio <= 0 or not before_lo < before_hi <= 0:
+            raise ValueError('刺激前窗口或响应倍数无效')
+        if np.any(stim_times + before_lo / 1000 < 0):
+            raise ValueError('刺激前背景窗口超出H5录制范围，不能将未录制部分视为零')
+        before = count_windows(session.times, stim_times + before_lo / 1000, (before_hi-before_lo)/1000)
+        thresholds = ratio * before * (hi-lo)/(before_hi-before_lo)
+        threshold = None  # This rule has one threshold per trial, not one global threshold.
+    else:
+        threshold = response_threshold(baseline, cfg["threshold_rule"])
+        thresholds = np.full(len(stim_times), threshold)
+    success = response > thresholds
     artifact_valid = artifacts > int(cfg["artifact_min_spikes"])
     trials = [dict(trial=i + 1, stim_time_sec=float(t), artifact_0_3ms=int(a),
-                   artifact_0_2ms=int(g), response_10_50ms=int(r), response_threshold=float(threshold),
+                   artifact_0_2ms=int(g), response_10_50ms=int(r), response_threshold=float(th),
                    response_success=bool(s), artifact_valid=bool(v),
                    success=bool(s and (v or not cfg["enforce_artifact_qc"])))
-              for i, (t, a, g, r, s, v) in enumerate(zip(stim_times, artifacts, generic_artifacts, response, success, artifact_valid))]
+              for i, (t, a, g, r, th, s, v) in enumerate(zip(stim_times, artifacts, generic_artifacts, response, thresholds, success, artifact_valid))]
+    if paired:
+        for row, count in zip(trials, before):
+            row.update(baseline_minus50_minus10ms=int(count),
+                       baseline_rate_hz=float(count/((before_hi-before_lo)/1000)),
+                       response_rate_hz=float(row['response_10_50ms']/((hi-lo)/1000)),
+                       paired_baseline_window_ms=[before_lo,before_hi], response_to_baseline_ratio=ratio)
     successful = sum(row["success"] for row in trials)
     fraction = successful / len(trials)
     artifact_file_valid = float(artifacts.mean()) > cfg["artifact_min_spikes"]
@@ -63,8 +93,12 @@ def evaluate_probe(session, stim_times, baseline, cfg):
                    artifact_0_2ms_mean=float(generic_artifacts.mean()),
                    generic_delivery_valid=bool(generic_artifacts.mean() >= 200),
                    response_10_50ms_mean=float(response.mean()), response_10_50ms_total=int(response.sum()),
-                   artifact_file_valid=artifact_file_valid, response_threshold=float(threshold),
+                   artifact_file_valid=artifact_file_valid, response_threshold=threshold,
                    threshold_rule=cfg["threshold_rule"], response_window_ms=[lo, hi])
+    if paired:
+        summary.update(paired_baseline_window_ms=[before_lo,before_hi], response_to_baseline_ratio=ratio,
+                       trial_specific_threshold=True, response_threshold_mean=float(thresholds.mean()),
+                       baseline_minus50_minus10ms_mean=float(before.mean()))
     return trials, summary
 
 

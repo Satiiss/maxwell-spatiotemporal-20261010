@@ -66,6 +66,9 @@ def create_run(system):
 
 
 def validate(system, stimulation, hardware=False, probe_only=False):
+    if stimulation['probe']['threshold_rule']=='paired_pre_stim_ratio':
+        from analysis.utils.probe import validate_paired_config
+        validate_paired_config(stimulation['probe'])
     from python.schedule import Condition, waveform_commands, next_onset_interval, pulse_duration_sec
     p = stimulation["protocol"]
     if stimulation["probe"].get("order", "sequential") not in ("sequential", "unit_interleaved"):
@@ -108,8 +111,8 @@ def validate(system, stimulation, hardware=False, probe_only=False):
             raise ValueError("真实实验前须填写culture.id与culture.div")
         if len(system["manual_inputs"]["candidate_centers"]) not in (5, 6):
             raise ValueError("真实实验前须填写5–6个手动审阅的候选中心电极")
-        if stimulation["probe"]["threshold_rule"] not in ("mean_plus_3sd", "mean_plus_3variance"):
-            raise ValueError("probe.threshold_rule尚未明确：请选择三倍标准差或三倍方差公式")
+        if stimulation["probe"]["threshold_rule"] not in ("mean_plus_3sd", "mean_plus_3variance", "paired_pre_stim_ratio"):
+            raise ValueError("probe.threshold_rule尚未明确：选择三倍标准差、三倍方差或paired_pre_stim_ratio")
         for key in ("baseline_h5", "baseline_bursts_csv", "network_review_record"):
             value = system["manual_inputs"].get(key)
             if value and not Path(value).is_file():
