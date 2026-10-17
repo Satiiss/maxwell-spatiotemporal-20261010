@@ -26,9 +26,10 @@ def load_configuration(directory):
     root = Path(system["data"]["root"])
     system["data"]["root"] = str(root if root.is_absolute() else ROOT / root)
     # User-entered relative paths are relative to the configuration directory.
-    paths = [(system["electrode_map"], "cfg_path"), (system["manual_inputs"], "baseline_h5"),
-             (system["manual_inputs"], "baseline_bursts_csv"), (system["manual_inputs"], "network_review_record"),
-             (system["manual_inputs"], "additional_probe_from"),
+    manual = system.get("manual_inputs") or {}
+    paths = [(system["electrode_map"], "cfg_path"), (manual, "baseline_h5"),
+             (manual, "baseline_bursts_csv"), (manual, "network_review_record"),
+             (manual, "additional_probe_from"),
              (system["maxwell"], "api_parent"), (system["maxwell"], "maxlab_root")]
     for mapping, key in paths:
         value = mapping.get(key)
@@ -67,26 +68,27 @@ def create_run(system):
 
 
 def validate(system, stimulation, hardware=False, probe_only=False):
-    from analysis.utils.probe import minimum_probe_successes
-    minimum_probe_successes(stimulation["probe"])
-    if system["manual_inputs"].get("additional_probe"):
-        from python.additional_probe import validate_additional_probe
-        validate_additional_probe(system, stimulation, hardware=hardware)
-    if stimulation['probe']['threshold_rule']=='paired_pre_stim_ratio':
-        from analysis.utils.probe import validate_paired_config
-        validate_paired_config(stimulation['probe'])
+    if probe_only:
+        from analysis.utils.probe import minimum_probe_successes, validate_paired_config
+        minimum_probe_successes(stimulation["probe"])
+        if system["manual_inputs"].get("additional_probe"):
+            from python.additional_probe import validate_additional_probe
+            validate_additional_probe(system, stimulation, hardware=hardware)
+        if stimulation['probe']['threshold_rule'] == 'paired_pre_stim_ratio':
+            validate_paired_config(stimulation['probe'])
+        if stimulation["probe"].get("order", "sequential") not in ("sequential", "unit_interleaved"):
+            raise ValueError("probe.order只能为sequential或unit_interleaved")
+        if stimulation["probe"].get("order") == "unit_interleaved" and not math.isclose(
+                float(stimulation["probe"]["frequency_hz"]), 2.0):
+            raise ValueError("已确认的交替Probe要求全局2Hz，即每0.5秒刺激下一位点")
+        tail = float(stimulation["probe"].get("recording_tail_sec", 1.0))
+        if not math.isfinite(tail) or tail < .5:
+            raise ValueError("probe.recording_tail_sec必须至少0.5秒；停止录制前需要保留spike处理时间")
     from python.schedule import Condition, waveform_commands, next_onset_interval, pulse_duration_sec
     p = stimulation["protocol"]
-    if stimulation["probe"].get("order", "sequential") not in ("sequential", "unit_interleaved"):
-        raise ValueError("probe.order只能为sequential或unit_interleaved")
-    if stimulation["probe"].get("order") == "unit_interleaved" and not math.isclose(
-            float(stimulation["probe"]["frequency_hz"]), 2.0):
-        raise ValueError("已确认的交替Probe要求全局2Hz，即每0.5秒刺激下一位点")
-    tail = float(stimulation["probe"].get("recording_tail_sec", 1.0))
-    if probe_only and (not math.isfinite(tail) or tail < .5):
-        raise ValueError("probe.recording_tail_sec必须至少0.5秒；停止录制前需要保留spike处理时间")
-    if (not 1 <= stimulation["probe"]["trials_per_electrode"] or
-            (not probe_only and not 1 <= stimulation["formal"]["trials_per_condition"])):
+    trials = (stimulation["probe"]["trials_per_electrode"] if probe_only
+              else stimulation["formal"]["trials_per_condition"])
+    if isinstance(trials, bool) or not isinstance(trials, int) or trials < 1:
         raise ValueError("trial数必须为正整数")
     if not probe_only and stimulation["formal"]["temporal_interval_mode"] not in ("after_second", "onset_to_onset"):
         raise ValueError("时序间隔模式必须显式设置")
@@ -115,11 +117,11 @@ def validate(system, stimulation, hardware=False, probe_only=False):
             raise ValueError("请填写实际electrode_map.cfg_path；当前允许留空生成代码")
         if not system["culture"].get("id") or system["culture"].get("div") is None:
             raise ValueError("真实实验前须填写culture.id与culture.div")
-        if not system["manual_inputs"].get("additional_probe") and len(system["manual_inputs"]["candidate_centers"]) not in (5, 6):
+        if probe_only and not system["manual_inputs"].get("additional_probe") and len(system["manual_inputs"]["candidate_centers"]) not in (5, 6):
             raise ValueError("真实实验前须填写5–6个手动审阅的候选中心电极")
-        if stimulation["probe"]["threshold_rule"] not in ("mean_plus_3sd", "mean_plus_3variance", "paired_pre_stim_ratio"):
+        if probe_only and stimulation["probe"]["threshold_rule"] not in ("mean_plus_3sd", "mean_plus_3variance", "paired_pre_stim_ratio"):
             raise ValueError("probe.threshold_rule尚未明确：选择三倍标准差、三倍方差或paired_pre_stim_ratio")
-        for key in ("baseline_h5", "baseline_bursts_csv", "network_review_record"):
+        for key in (("baseline_h5", "baseline_bursts_csv", "network_review_record") if probe_only else ()):
             value = system["manual_inputs"].get(key)
             if value and not Path(value).is_file():
                 raise ValueError(f"{key}文件不存在")
@@ -138,7 +140,7 @@ def build_cpp(system):
     system["maxwell"]["monitor_executable"] = str(executable)
 
 
-def make_plan(system, stimulation, probe_only=False):
+def make_plan(system, stimulation, probe_only=False, formal_units=None):
     if probe_only:
         from analysis.utils.probe import minimum_probe_successes
         centers = system["manual_inputs"]["candidate_centers"]
@@ -153,7 +155,7 @@ def make_plan(system, stimulation, probe_only=False):
                     pending_inputs=["cfg_path", "culture", "candidate_centers", "probe.threshold_rule"],
                     full_analysis_deferred=True)
     from python.schedule import formal_conditions, round_robin, Condition, next_onset_interval, pulse_duration_sec
-    units = [dict(electrodes=[10 * i, 10 * i + 1]) for i in range(1, 4)]
+    units = formal_units or [dict(electrodes=[10 * i, 10 * i + 1]) for i in range(1, 4)]
     stages = formal_conditions(units, stimulation["formal"]["dt_ms"])
     formal = stimulation["formal"]
     rounds = formal["trials_per_condition"]
@@ -166,36 +168,51 @@ def make_plan(system, stimulation, probe_only=False):
     return dict(execution_scope="full", stages=stage_rows, formal_trial_count=sum(r["trials"] for r in stage_rows),
                 formal_nominal_duration_sec=duration, temporal_interval_mode=formal["temporal_interval_mode"],
                 raw_uncompressed_bytes_at_1024_channels_20khz=duration * 1024 * 20000 * 2,
-                pending_inputs=["cfg_path", "culture", "candidate_centers", "probe.threshold_rule"],
+                pending_inputs=["cfg_path", "culture", "formal_selection"],
                 full_analysis_deferred=True)
 
 
 def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quick=False, compile_cpp=False,
-            probe_only=True, formal_from=None, routing_check=False, probe_order=None):
+            probe_only=True, formal_from=None, routing_check=False, probe_order=None,
+            formal_selection=None, formal_routing_check=False):
     from python.utils.progress import Reporter
     from python.utils.persistence import atomic_json
     import yaml
     import copy
     system, stimulation = copy.deepcopy(system), copy.deepcopy(stimulation)
-    if routing_check and formal_from is not None:
+    if formal_from is not None and formal_selection is not None:
+        raise ValueError("独立正式选点与旧formal-from入口不能同时使用")
+    formal_requested = formal_from is not None or formal_selection is not None
+    if formal_selection is not None and probe_order is not None:
+        raise ValueError("独立正式选点不使用probe_order")
+    if routing_check and formal_requested:
         raise ValueError("路由检查不能与正式实验同时运行")
-    if probe_order is not None:
-        stimulation["probe"]["order"] = probe_order
-    stimulation["probe"].setdefault("order", "sequential")
-    stimulation["probe"].setdefault("recording_tail_sec", 1.0)
-    if formal_from is not None:
+    if formal_routing_check and not formal_requested:
+        raise ValueError("正式路由检查必须提供独立正式选点")
+    if formal_requested:
         probe_only = False
     elif not probe_only:
-        raise ValueError("Probe和正式实验必须分开启动；正式实验请提供--formal-from Probe结果目录")
-    if stimulation["probe"].get("enforce_artifact_qc"):
-        logging.warning("按最新Probe要求，伪迹仅作诊断；本次覆盖旧enforce_artifact_qc为false并保存快照")
-    stimulation["probe"]["enforce_artifact_qc"] = False
-    system["experiment"]["execution_scope"] = ("probe_routing_check" if routing_check else
+        raise ValueError("Probe和正式实验必须分开启动；正式实验请提供--formal-selection或--formal-from")
+    if probe_only:
+        if probe_order is not None:
+            stimulation["probe"]["order"] = probe_order
+        stimulation["probe"].setdefault("order", "sequential")
+        stimulation["probe"].setdefault("recording_tail_sec", 1.0)
+        if stimulation["probe"].get("enforce_artifact_qc"):
+            logging.warning("按最新Probe要求，伪迹仅作诊断；本次覆盖旧enforce_artifact_qc为false并保存快照")
+        stimulation["probe"]["enforce_artifact_qc"] = False
+    system["experiment"]["execution_scope"] = ("formal_routing_check" if formal_routing_check else
+                                                "probe_routing_check" if routing_check else
                                                 ("probe_only" if probe_only else "formal_only"))
     handoff = None
     if formal_from is not None:
+        if probe_order is not None:
+            stimulation["probe"]["order"] = probe_order
         from python.probe_handoff import load_probe_handoff
         handoff = load_probe_handoff(formal_from, system, stimulation, hardware=mode == "hardware")
+    if formal_selection is not None:
+        from python.formal_selection import load_formal_selection
+        handoff = load_formal_selection(formal_selection, system, stimulation, hardware=mode == "hardware")
     reporter = reporter or Reporter()
     run_dir = create_run(system)
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
@@ -210,10 +227,29 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
         if mode == "hardware" and not dry_run and probe_only and not routing_check:
             from python.acquisition_settings import validate_baseline_acquisition
             validate_baseline_acquisition(system)
-        plan = make_plan(system, stimulation, probe_only=probe_only)
-        if formal_from is not None:
-            plan.update(execution_scope="formal_only", probe_trial_count=0, source_probe_run=str(Path(formal_from).resolve()))
-        if routing_check:
+        plan = make_plan(system, stimulation, probe_only=probe_only, formal_units=handoff[0] if handoff else None)
+        if handoff is not None:
+            from dataclasses import asdict
+            from python.schedule import formal_conditions
+            from python.utils.persistence import write_csv
+            plan.update(execution_scope="formal_only", probe_trial_count=0, formal_units=handoff[0], pending_inputs=[])
+            if formal_from is not None:
+                plan["source_probe_run"] = str(Path(formal_from).resolve())
+            atomic_json(run_dir / "formal_selection.json", dict(units=handoff[0], reference=handoff[1]))
+            if formal_selection is not None:
+                import shutil
+                shutil.copy2(formal_selection, run_dir / ("formal_selection_source" + Path(formal_selection).suffix))
+            write_csv(run_dir / "formal_condition_plan.csv", [dict(stage=stage, **asdict(c))
+                for stage, conditions in formal_conditions(handoff[0], stimulation["formal"]["dt_ms"])
+                for c in conditions])
+        if formal_routing_check:
+            plan.update(execution_scope="formal_routing_check", planned_formal_trial_count=plan["formal_trial_count"],
+                        stages=[], formal_trial_count=0,
+                        formal_nominal_duration_sec=0, stimulation_sent=False,
+                        raw_uncompressed_bytes_at_1024_channels_20khz=0)
+        if formal_routing_check:
+            logging.info("run=%s | 仅检查正式六电极联合路由；不发刺激、不采集H5", run_dir)
+        elif routing_check:
             plan.update(execution_scope="probe_routing_check", probe_trial_count=0, stimulation_sent=False)
         atomic_json(run_dir / "experiment_plan.json", plan)
         if routing_check:
@@ -244,7 +280,8 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
             backend = MockBackend(system, reporter)
         from python.experiment_runner import ExperimentRunner
         runner = ExperimentRunner(system, stimulation, run_dir, backend, reporter,
-                                  probe_only=probe_only, formal_handoff=handoff, routing_check=routing_check)
+                                  probe_only=probe_only, formal_handoff=handoff, routing_check=routing_check,
+                                  formal_routing_check=formal_routing_check)
         runner.run()
         return run_dir
     except BaseException as exc:
@@ -269,7 +306,9 @@ def main():
     stage = parser.add_mutually_exclusive_group()
     stage.add_argument("--probe-only", action="store_true", help="仅执行Probe（默认）；完成后停止，待人工审阅")
     stage.add_argument("--formal-from", type=Path, help="独立启动正式实验，读取已审阅的Probe结果目录，不重复Probe")
+    stage.add_argument("--formal-selection", type=Path, help="独立选点Python/JSON；支持跨轮Probe证据及人工选点")
     stage.add_argument("--probe-routing-check", action="store_true", help="只检查候选unit能否四位点独立路由，不发送刺激")
+    parser.add_argument("--formal-routing-check", action="store_true", help="结合正式选点只检查六电极联合路由，不刺激")
     parser.add_argument("--probe-order", choices=["sequential", "unit_interleaved"],
                         help="Probe顺序；交替模式为A/B/C/D每0.5秒换一位点，各位点每2秒一次")
     args = parser.parse_args()
@@ -279,18 +318,19 @@ def main():
         if args.probe_order is not None:
             stimulation["probe"]["order"] = args.probe_order
         wants_gui = args.gui or (system["gui"]["enabled"] and not args.headless and not args.dry_run)
-        if wants_gui and (args.probe_routing_check or stimulation["probe"].get("order") == "unit_interleaved"):
+        if wants_gui and (args.probe_routing_check or stimulation.get("probe", {}).get("order") == "unit_interleaved"):
             raise ValueError("交替Probe和路由检查请使用--headless终端模式")
-        if args.formal_from and (args.gui or (system["gui"]["enabled"] and not args.headless and not args.dry_run)):
-            raise ValueError("正式实验请使用--headless --formal-from；GUI仅运行Probe")
+        if (args.formal_from or args.formal_selection or args.formal_routing_check) and wants_gui:
+            raise ValueError("正式实验及正式路由检查请使用--headless；GUI仅运行Probe")
         if args.gui or (system["gui"]["enabled"] and not args.headless and not args.dry_run):
             from python.gui import launch
             return launch(system, stimulation, args)
         if args.mode == "hardware" and not args.enable_hardware and not args.dry_run:
             raise ValueError("真实执行请显式使用 --mode hardware --enable-hardware")
         output = execute(system, stimulation, args.mode, dry_run=args.dry_run, quick=args.quick,
-                         compile_cpp=args.build_cpp, probe_only=args.formal_from is None, formal_from=args.formal_from,
-                         routing_check=args.probe_routing_check, probe_order=args.probe_order)
+                         compile_cpp=args.build_cpp, probe_only=not (args.formal_from or args.formal_selection), formal_from=args.formal_from,
+                         routing_check=args.probe_routing_check, probe_order=args.probe_order,
+                         formal_selection=args.formal_selection, formal_routing_check=args.formal_routing_check)
         print(f"运行结果目录: {output.resolve()}")
         return 0
     except KeyboardInterrupt:

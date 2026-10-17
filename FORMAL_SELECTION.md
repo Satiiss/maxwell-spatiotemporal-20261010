@@ -1,0 +1,96 @@
+# 正式采集与Probe解耦
+
+正式采集读取独立选点，而不要求某个Probe run整体合格。Probe继续生成自己的评分、候选报告和
+审阅状态；这些结果不再控制独立正式入口能否运行。旧`--formal-from`作为严格单run兼容入口保留。
+正式刺激条件、波形生成、快切、事件时间及三段录制算法不变，完整分析pipeline/ESRC仍暂缓。
+
+## 编辑文件，使用固定命令
+
+在项目根目录打开`run_formal.py`，只改顶部`CONFIG_DIR`和`SELECTION`：
+
+- `CONFIG_DIR`：本培养物当前的配置目录，确认其中culture、DIV、日期、CFG、采集设置和formal参数。
+- `culture_id`：须与当前配置的培养物一致，默认空值会拒绝运行。
+- `units`：恰好三项，每项两个电极ID。列表顺序映射为正式unit 1/2/3；原unit编号仍单独留档。
+- `minimum_success_trials`：选点参考门槛，默认6/10，不修改源Probe定义或原评分。
+
+下列仅为格式示例，电极和路径均须自行填写，不代表推荐选点：
+
+```python
+CONFIG_DIR = "config/YOUR_CURRENT_CONFIG"
+SELECTION = {
+    "culture_id": "YOUR_CULTURE",
+    "minimum_success_trials": 6,
+    "units": [
+        {"source_run": "data/PROBE_RUN_A", "source_unit": "candidate_01",
+         "electrodes": [100, 101], "exceptions": {}},
+        {"source_run": "data/PROBE_RUN_B", "source_unit": "candidate_07",
+         "electrodes": [200, 201], "exceptions": {}},
+        {"source_run": "data/PROBE_RUN_B", "source_unit": "candidate_08",
+         "electrodes": [300, 301], "exceptions": {301: "人工纳入该位点的具体理由"}},
+    ],
+}
+```
+
+路径相对于选点文件所在目录。source_unit须使用源candidate_sites.csv中的完整名称。
+不会写死任何实际培养物或Unit 3/7/8，也不会自动填入旧培养物电极。
+
+固定预演命令：
+
+```bash
+python -B run_formal.py
+```
+
+默认仅预演，不导入MaxLab、不连接设备。核对输出的六个电极、实际条件表、次数、名义时长和配置快照。
+仓库默认正式参数为5400 trial、约176.9分钟，含正式前/后各600秒自发和阶段休息；
+1024通道20kHz uint16未压缩约435GB，实际文件大小与压缩及记录通道数有关。
+
+单独检查六电极联合路由（会连接设备、下载路由和校准，但不创建Sequence、不发刺激、不录H5）：
+
+```bash
+python -B run_formal.py --routing-check --enable-hardware
+```
+
+正式采集必须另行显式执行；下条命令会发送真实刺激：
+
+```bash
+python -B run_formal.py --enable-hardware
+```
+
+完成路由检查不会自动接续正式采集；实际正式采集开始时也会重新验证六电极路由。
+要求6个记录电极互不重复，属于当前CFG，分别路由到不同刺激单元，且路由不改变记录映射。
+
+## Probe只是可选的选点证据
+
+提供source_run时，来源可以是probe_complete或probe_review_required，支持跨多个run。
+校验培养物、CFG、设备/well、检测阈值/gain及波形一致；检查电极确实属于所注明的源unit。
+读取的是已关闭run的CSV/JSON/快照，不重读H5、不重新评分、不修改旧run。
+
+以真实成功次数对照本次参考门槛，原eligible字段另存。例如旧7/10政策下被标为False的6/10，
+在本次6/10参考门槛下可以选用，但源False仍保留。低于本次参考门槛时，逐电极填写exceptions理由；
+5/10仍记录为5/10及meets_reference_policy=false，不伪装成6/10。例外不能伪造缺失、未测或
+不可路由的Probe记录；声称引用Probe证据时须有完整10次且成功次数与比例一致。
+
+若完全由人工指定、不引用Probe，可以省略source_run，提供name、electrodes和selection_reason。
+这种选点明确保存为manual_unscored，各Probe分数字段为null，不标成Probe合格。
+不再要求manual_inputs、候选中心、旧基线或stimulation.probe配置参与正式执行。
+
+自动化程序也可生成同结构的JSON，使用：
+
+```bash
+python -B main.py --headless --formal-selection /path/to/selection.json --dry-run
+```
+
+独立选点文件是人为编辑的Python或JSON；Python文件会执行其中定义，应只使用自己的文件。
+
+## 留档与验证
+
+预演和正式run均保存formal_selection.json（实际选点、真实分数、人工理由、来源文件SHA256）、
+formal_selection_source.py/json（输入文件副本）、formal_condition_plan.csv（实际六电极的108条件表）
+和experiment_plan.json。正式采集另保存三段H5、事件时间及trial日志；不生成新的Probe段。
+零刺激检查保存formal_routing_check.json；正式采集的参数仍由本次config_snapshot记录。
+
+```bash
+python -B -m unittest discover -s tests -p 'test_formal_selection.py' -v
+```
+
+应为9项通过。软件检查只使用模拟，不代表现场六电极已完成联合路由验收。

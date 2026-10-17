@@ -23,7 +23,7 @@ python -B main.py --config-dir config/<新的独立子目录> --headless --probe
 dry-run应显示4个unit共160次、min_success_trials=6和formal_trial_count=0。
 实际Probe必须由操作者另行显式启动hardware模式；完成后停止，不自动正式实验。
 正式实验仍须至少3个unit各有至少2个有效电极，并独立人工审阅启动。
-本补丁不合并多次run的正式选点，不重新评分旧run。
+补测本身不合并多次run的正式选点，不重新评分旧run；独立正式选点现由run_formal.py管理，见FORMAL_SELECTION.md。
 
 空间图统一X向右、Y向下，保留CFG原始坐标与电极ID；中心标签#rank: electrode ID。
 旧图文件不会自动重绘，显示修复不改变网络计算或刺激选点。

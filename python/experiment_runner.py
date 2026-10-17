@@ -25,19 +25,24 @@ from .interleaved_probe import check_probe_pools, run_interleaved_probe
 
 class ExperimentRunner:
     def __init__(self, system, stimulation, run_dir, backend, reporter, probe_only=True, formal_handoff=None,
-                 routing_check=False):
+                 routing_check=False, formal_routing_check=False):
         if not probe_only and formal_handoff is None:
-            raise ValueError("禁止自动衔接正式实验；请独立加载已审阅的Probe结果")
+            raise ValueError("禁止自动衔接正式实验；请独立加载正式选点")
         self.system, self.stimulation = copy.deepcopy(system), copy.deepcopy(stimulation)
         self.probe_only = probe_only
         self.formal_handoff = formal_handoff
         self.routing_check = routing_check
+        self.formal_routing_check = formal_routing_check
         if routing_check and not probe_only:
             raise ValueError("路由检查不能启动正式实验")
-        self.stimulation["probe"]["enforce_artifact_qc"] = False
-        self.stimulation["probe"].setdefault("recording_tail_sec", 1.0)
-        self.stimulation["probe"].setdefault("order", "sequential")
-        self.execution_scope = "probe_routing_check" if routing_check else ("probe_only" if probe_only else "formal_only")
+        if formal_routing_check and probe_only:
+            raise ValueError("正式路由检查需要正式选点")
+        if probe_only:
+            self.stimulation["probe"]["enforce_artifact_qc"] = False
+            self.stimulation["probe"].setdefault("recording_tail_sec", 1.0)
+            self.stimulation["probe"].setdefault("order", "sequential")
+        self.execution_scope = ("formal_routing_check" if formal_routing_check else
+            "probe_routing_check" if routing_check else ("probe_only" if probe_only else "formal_only"))
         self.system["experiment"]["execution_scope"] = self.execution_scope
         self.run_dir, self.backend, self.reporter = Path(run_dir), backend, reporter
         self.current_log = None
@@ -72,7 +77,7 @@ class ExperimentRunner:
                                                                allow_unicode=True, sort_keys=False), encoding="utf-8")
 
     def initialize(self):
-        if self.system["manual_inputs"].get("additional_probe"):
+        if self.probe_only and self.system["manual_inputs"].get("additional_probe"):
             from .additional_probe import validate_additional_probe
             validate_additional_probe(self.system, self.stimulation, hardware=self.backend.realtime)
         cfg = self.run_dir / (datetime.now().strftime("%Hh%Mm%Ss") + ".cfg")
@@ -81,6 +86,19 @@ class ExperimentRunner:
             shutil.copy2(source, cfg)
         self.backend.initialize(cfg)
         self.cfg = cfg
+        if not self.probe_only:
+            self.formal_units, reference = self.formal_handoff
+            present = {r["electrode"] for r in self.backend.mapping}
+            if any(e not in present for u in self.formal_units for e in u["electrodes"]):
+                raise ValueError("正式选点不在设备当前记录映射中")
+            self.units = [dict(unit_id=u["source_unit"], electrodes=u["electrodes"])
+                          for u in self.formal_units]
+            unit_map(self.backend.mapping, self.units, self.run_dir / "pre_experiment/candidate_units")
+            self.snapshot()
+            atomic_json(self.run_dir / "source_inputs.json", dict(cfg=str(cfg), cfg_sha256=sha256(cfg),
+                selection_reference=reference, synthetic=not self.backend.realtime,
+                analysis_pipeline_deferred=True))
+            return
         if not self.backend.realtime:
             if not self.system["manual_inputs"].get("additional_probe"):
                 self.system["manual_inputs"]["candidate_centers"] = self.backend.centers
@@ -407,7 +425,16 @@ class ExperimentRunner:
         self.state("INITIALIZE")
         try:
             self.initialize()
-            if self.routing_check:
+            if self.formal_routing_check:
+                pool = self.backend.route([e for u in self.formal_units for e in u["electrodes"]])
+                if len(pool) != 6 or len(set(pool.values())) != 6:
+                    raise ValueError("正式六电极必须独立路由到6个不同刺激单元")
+                self.result = dict(status="formal_routing_check_complete", execution_scope=self.execution_scope,
+                    synthetic=not self.backend.realtime, formal_started=False, formal_trial_count=0,
+                    probe_trial_count=0, stimulation_sent=False, selected_formal_units=self.formal_units,
+                    stimulation_pool=pool, completed_utc=utc_now())
+                atomic_json(self.run_dir / "formal_routing_check.json", self.result)
+            elif self.routing_check:
                 reports = check_probe_pools(self)
                 self.result = dict(status="probe_routing_check_complete", execution_scope="probe_routing_check",
                     synthetic=not self.backend.realtime, formal_started=False, formal_trial_count=0,
@@ -424,8 +451,10 @@ class ExperimentRunner:
                     analysis_pipeline_deferred=True, completed_utc=utc_now())
             else:
                 self.formal_units, reference = self.formal_handoff
-                atomic_json(self.run_dir / "pre_experiment/probe_source_reference.json", reference)
-                self.state("LOAD_REVIEWED_PROBE", **reference)
+                name = ("formal_selection_reference.json" if reference.get("selection_mode")
+                        else "probe_source_reference.json")
+                atomic_json(self.run_dir / "pre_experiment" / name, reference)
+                self.state("LOAD_FORMAL_SELECTION", **reference)
                 self.formal()
         except BaseException as exc:
             logging.exception("实验未完成，停止刺激并保存状态")
@@ -459,6 +488,7 @@ class ExperimentRunner:
             finally:
                 self.audit.add("experiment_end")
                 self.audit.close()
-        self.state("ROUTING_CHECK_COMPLETE" if self.routing_check else
+        self.state("FORMAL_ROUTING_CHECK_COMPLETE" if self.formal_routing_check else
+                   "ROUTING_CHECK_COMPLETE" if self.routing_check else
                    (("PROBE_COMPLETE" if self.probe_ready else "PROBE_REVIEW_REQUIRED") if self.probe_only else "COMPLETE"))
         atomic_json(self.run_dir / "experiment_result.json", self.result)

@@ -1,0 +1,48 @@
+"""Edit the selection below; use fixed commands to plan, check routing, or acquire."""
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent
+
+# Edit only this section. Paths inside SELECTION are relative to this file.
+CONFIG_DIR = "config"  # Set to your current culture's configuration directory.
+SELECTION = {
+    "culture_id": "",  # Must match CONFIG_DIR/system.yaml.
+    "minimum_success_trials": 6,  # Reference policy; does not rewrite Probe scores.
+    "units": [
+        # Exactly three entries, two electrode IDs each. Example structure:
+        # {"source_run": "data/YOUR_PROBE_RUN", "source_unit": "candidate_XX",
+        #  "electrodes": [ID_A, ID_B], "exceptions": {ID_B: "Reason if below reference policy"}},
+        # Without Probe evidence: {"name": "manual_A", "electrodes": [ID_A, ID_B],
+        #                         "selection_reason": "Manual selection basis"},
+    ],
+}
+# End editable section. No default experimental electrodes are selected.
+
+
+def main():
+    import argparse
+    import json
+    import logging
+    from main import load_configuration, execute
+    parser = argparse.ArgumentParser(description="正式实验独立入口；默认只预演，不接触设备")
+    parser.add_argument("--enable-hardware", action="store_true", help="显式允许连接设备；未指定时仅预演")
+    parser.add_argument("--routing-check", action="store_true", help="只检查六电极联合路由，不发刺激、不采集H5")
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.getLogger("fontTools").setLevel(logging.WARNING)
+    print("仅预演，不连接设备" if not args.enable_hardware else
+          "仅执行零刺激联合路由检查" if args.routing_check else "执行真实正式采集")
+    directory = Path(CONFIG_DIR).expanduser()
+    system, stimulation = load_configuration(directory if directory.is_absolute() else ROOT / directory)
+    run = execute(system, stimulation, mode="hardware", formal_selection=Path(__file__),
+                  dry_run=not args.enable_hardware, formal_routing_check=args.routing_check)
+    plan = json.loads((run / "experiment_plan.json").read_text(encoding="utf-8"))
+    for unit in plan["formal_units"]:
+        print(f"正式unit {unit['formal_unit']} 来源={unit['source_unit']} 电极={unit['electrodes']}")
+        for metric in unit["site_metrics"]:
+            print("  ", metric)
+    print(f"trial={plan['formal_trial_count']}；名义时长={plan['formal_nominal_duration_sec']/60:.1f}min；结果={run}")
+
+
+if __name__ == "__main__":
+    main()
