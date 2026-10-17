@@ -80,6 +80,9 @@ class ExperimentRunner:
         if self.probe_only and self.system["manual_inputs"].get("additional_probe"):
             from .additional_probe import validate_additional_probe
             validate_additional_probe(self.system, self.stimulation, hardware=self.backend.realtime)
+        if self.probe_only and self.system["manual_inputs"].get("repeat_probe"):
+            from .additional_probe import validate_repeat_probe
+            validate_repeat_probe(self.system, self.stimulation, hardware=self.backend.realtime)
         cfg = self.run_dir / (datetime.now().strftime("%Hh%Mm%Ss") + ".cfg")
         source = self.system["electrode_map"]["cfg_path"]
         if self.backend.realtime:
@@ -100,7 +103,7 @@ class ExperimentRunner:
                 analysis_pipeline_deferred=True))
             return
         if not self.backend.realtime:
-            if not self.system["manual_inputs"].get("additional_probe"):
+            if not (self.system["manual_inputs"].get("additional_probe") or self.system["manual_inputs"].get("repeat_probe")):
                 self.system["manual_inputs"]["candidate_centers"] = self.backend.centers
             if self.stimulation["probe"]["threshold_rule"] is None:
                 self.stimulation["probe"]["threshold_rule"] = "mean_plus_3sd"
@@ -109,7 +112,7 @@ class ExperimentRunner:
         manual = self.system["manual_inputs"]
         self.units = build_local_units(self.backend.mapping, centers,
             manual["minimum_center_distance_pitches"] * manual["electrode_pitch_um"],
-            additional=bool(manual.get("additional_probe")), ranks=manual.get("candidate_ranks"))
+            additional=bool(manual.get("additional_probe") or manual.get("repeat_probe")), ranks=manual.get("candidate_ranks"))
         network_review = manual.get("network_review_record")
         if network_review:
             shutil.copy2(network_review, self.run_dir / "pre_experiment" / Path(network_review).name)
@@ -122,6 +125,7 @@ class ExperimentRunner:
         atomic_json(self.run_dir / "source_inputs.json", dict(cfg=str(cfg), cfg_sha256=sha256(cfg),
                     supplied_baseline=manual.get("baseline_h5"), manual_centers=centers,
                     additional_probe_from=manual.get("additional_probe_from"),
+                    repeat_probe_from=manual.get("repeat_probe_from"),
                     synthetic=not self.backend.realtime, analysis_pipeline_deferred=True))
 
     def start_segment(self, directory, block, phase, expected_trials=0):

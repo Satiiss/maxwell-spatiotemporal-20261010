@@ -30,6 +30,7 @@ def load_configuration(directory):
     paths = [(system["electrode_map"], "cfg_path"), (manual, "baseline_h5"),
              (manual, "baseline_bursts_csv"), (manual, "network_review_record"),
              (manual, "additional_probe_from"),
+             (manual, "repeat_probe_from"),
              (system["maxwell"], "api_parent"), (system["maxwell"], "maxlab_root")]
     for mapping, key in paths:
         value = mapping.get(key)
@@ -74,6 +75,9 @@ def validate(system, stimulation, hardware=False, probe_only=False):
         if system["manual_inputs"].get("additional_probe"):
             from python.additional_probe import validate_additional_probe
             validate_additional_probe(system, stimulation, hardware=hardware)
+        if system["manual_inputs"].get("repeat_probe"):
+            from python.additional_probe import validate_repeat_probe
+            validate_repeat_probe(system, stimulation, hardware=hardware)
         if stimulation['probe']['threshold_rule'] == 'paired_pre_stim_ratio':
             validate_paired_config(stimulation['probe'])
         if stimulation["probe"].get("order", "sequential") not in ("sequential", "unit_interleaved"):
@@ -117,7 +121,9 @@ def validate(system, stimulation, hardware=False, probe_only=False):
             raise ValueError("请填写实际electrode_map.cfg_path；当前允许留空生成代码")
         if not system["culture"].get("id") or system["culture"].get("div") is None:
             raise ValueError("真实实验前须填写culture.id与culture.div")
-        if probe_only and not system["manual_inputs"].get("additional_probe") and len(system["manual_inputs"]["candidate_centers"]) not in (5, 6):
+        if (probe_only and not system["manual_inputs"].get("additional_probe")
+                and not system["manual_inputs"].get("repeat_probe")
+                and len(system["manual_inputs"]["candidate_centers"]) not in (5, 6)):
             raise ValueError("真实实验前须填写5–6个手动审阅的候选中心电极")
         if probe_only and stimulation["probe"]["threshold_rule"] not in ("mean_plus_3sd", "mean_plus_3variance", "paired_pre_stim_ratio"):
             raise ValueError("probe.threshold_rule尚未明确：选择三倍标准差、三倍方差或paired_pre_stim_ratio")
@@ -147,6 +153,7 @@ def make_plan(system, stimulation, probe_only=False, formal_units=None):
         return dict(execution_scope="probe_only", stages=[], formal_trial_count=0,
                     min_success_trials=minimum_probe_successes(stimulation["probe"]),
                     additional_probe=bool(system["manual_inputs"].get("additional_probe")),
+                    repeat_probe=bool(system["manual_inputs"].get("repeat_probe")),
                     candidate_ranks=system["manual_inputs"].get("candidate_ranks"),
                     probe_order=stimulation["probe"].get("order", "sequential"),
                     formal_nominal_duration_sec=0,

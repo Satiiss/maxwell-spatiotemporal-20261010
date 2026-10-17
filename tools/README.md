@@ -6,6 +6,7 @@
 |---|---|
 | `analyze_baseline.py` | 自发基线burst、网络与候选分析 |
 | `prepare_additional_probe.py` | 从原Probe快照及--centers编号或--review草稿生成独立补测配置；自动匹配邻居及新编号，校验来源与旧位点排斥，不刺激 |
+| `prepare_repeat_probe.py` | 整轮重测准备；在文件顶部填写来源，恢复来源链全部原unit/四电极/编号，生成新配置，不刺激 |
 | `inspect_recording_settings.py` | 只读检查基线及Probe采集设置 |
 | `inspect_probe_results.py` | 只读检查Probe逐次响应与录制尾部 |
 | `review_probe_rate_variance.py` | 独立发放率方差对照 |

@@ -55,7 +55,7 @@ def load_probe_handoff(source, system, stimulation, hardware=False):
     manual = system["manual_inputs"]
     original_units = build_local_units(mapping, source_system["manual_inputs"]["candidate_centers"],
         manual["minimum_center_distance_pitches"] * manual["electrode_pitch_um"],
-        additional=bool(source_system["manual_inputs"].get("additional_probe")),
+        additional=bool(source_system["manual_inputs"].get("additional_probe") or source_system["manual_inputs"].get("repeat_probe")),
         ranks=source_system["manual_inputs"].get("candidate_ranks"))
     allowed = {u["unit_id"]: set(u["electrodes"]) for u in original_units}
     with (source / "pre_experiment/probe_summary.csv").open(encoding="utf-8-sig", newline="") as handle:

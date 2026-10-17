@@ -49,6 +49,7 @@ def prepare(source_run, review=None, minimum=None, output=None, *, centers=None)
             manual["minimum_center_distance_pitches"] * manual["electrode_pitch_um"],
             additional=True, ranks=list(range(first, first + len(centers))))
     manual.update(additional_probe=True, additional_probe_from=str(source),
+                  repeat_probe=False, repeat_probe_from=None,
                   candidate_centers=[u["center"] for u in proposed],
                   candidate_ranks=[u["rank"] for u in proposed],
                   network_review_record=str(plan_file) if plan_file else None)
