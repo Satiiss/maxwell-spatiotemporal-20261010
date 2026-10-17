@@ -24,6 +24,17 @@ class BaselineTests(unittest.TestCase):
     def setUp(self):
         self.config = yaml.safe_load((ROOT/"config/baseline_analysis.yaml").read_text(encoding="utf-8"))
 
+    def test_editable_paths_resolve_from_project_and_explicit_cli_overrides_defaults(self):
+        with patch.multiple(cli, H5_PATH="new/network.h5", CFG_PATH="new/matched.cfg", WELL=2,
+                PREVIOUS_ANALYSIS="", NETWORK_PARAMETERS={"pair_bin_ms": 2.}):
+            args = cli.parser().parse_args([])
+            self.assertEqual(Path(args.h5), ROOT / "new/network.h5")
+            self.assertEqual(Path(args.cfg), ROOT / "new/matched.cfg")
+            self.assertIsNone(args.previous_run)
+            self.assertEqual(args.network_parameters, {"pair_bin_ms": 2.})
+            explicit = cli.parser().parse_args(["--h5", "explicit.h5", "--cfg", "explicit.cfg", "--well", "0"])
+            self.assertEqual((explicit.h5, explicit.cfg, explicit.well), ("explicit.h5", "explicit.cfg", 0))
+
     def test_strict_shared_burst_and_peak_threshold(self):
         cfg = dict(self.config["network"], pair_min_shared_bursts=22)
         delays = np.array([10.2]*20+[15.2, 20.2, 25.2])
@@ -142,6 +153,8 @@ class BaselineTests(unittest.TestCase):
                 self.assertEqual(state["phase"], "REVIEW_NETWORK_PARAMETERS")
                 self.assertTrue((first/"network/stable_delay_edges.csv").read_text(encoding="utf-8-sig").startswith("source_channel"))
                 args.previous_run, args.keep_low_outdegree, args.review_reason = str(first), True, "manual test review"
+                args.network_parameters = {"pair_bin_ms": 2., "pair_peak_ratio_threshold": 15.,
+                                           "pair_min_shared_bursts": None}
                 clock.now.return_value = datetime(2000, 1, 1, 0, 0, 2)
                 with self.assertLogs("baseline_analysis", level="INFO"):
                     second = cli.run(args)
@@ -149,7 +162,17 @@ class BaselineTests(unittest.TestCase):
                 self.assertEqual([r["revision"] for r in history], [1, 2])
                 self.assertEqual(history[-1]["decision"], "keep_current")
                 self.assertEqual(history[-1]["reason"], "manual test review")
+                saved = yaml.safe_load((second / "parameters.yaml").read_text(encoding="utf-8"))
+                self.assertEqual(saved["network"]["pair_bin_ms"], 2.)
+                self.assertEqual(saved["network"]["pair_peak_ratio_threshold"], 15.)
+                self.assertEqual(saved["network"]["pair_min_shared_bursts"], 30)
+                self.assertEqual(history[-1]["before_parameters"]["network"]["pair_bin_ms"], 1.)
+                self.assertEqual(history[-1]["after_parameters"]["network"]["pair_bin_ms"], 2.)
                 self.assertEqual(json.loads((second/"workflow_state.json").read_text(encoding="utf-8"))["phase"], "INSUFFICIENT_CANDIDATES")
+                args.network_parameters = {"electrode_peak_ratio_threshold": 5.}
+                with self.assertRaisesRegex(ValueError, "四个pair"):
+                    cli.run(args)
+                args.network_parameters = {}
                 changed = deepcopy(self.config)
                 changed["burst"]["threshold_z"] = 7
                 parameters.write_text(yaml.safe_dump(changed), encoding="utf-8")

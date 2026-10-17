@@ -18,6 +18,31 @@
 | `probe_rate_variance.py` | 发放率对照的辅助模块，由入口调用 |
 | `probe_raster_review.py` | 刺激对齐和局部绘图辅助模块，由入口调用 |
 
+## 在文件顶部检查新的自发录制
+
+编辑现有`tools/analyze_baseline.py`顶部的`H5_PATH`、`CFG_PATH`及`NETWORK_PARAMETERS`，
+保存后固定执行`python -B tools/analyze_baseline.py`。相对路径以项目根目录为基准。
+`WELL=0`对应界面的Well 1；未填写H5/CFG时仍可沿用下面的命令行输入。
+
+| 参数 | 原默认值 | 含义 |
+|---|---|---|
+| `pair_bin_ms` | 1.0 | 电极对延时直方图bin，ms；改变它会改变峰统计，不能简单视为放宽/收紧 |
+| `pair_peak_ratio_threshold` | 20.0 | 延时峰比门槛，提高通常更严格 |
+| `pair_min_shared_bursts` | 30 | 两电极共享burst数须严格大于此值 |
+| `pair_min_abs_delay_ms` | 5.0 | 延时峰绝对值须严格大于此值，单位ms |
+
+顶部参数设为`None`时沿用`config/baseline_analysis.yaml`的值；填数字则覆盖对应项。
+原burst和stable-electrode定义保留在YAML。先用原参数分析新600秒Network，随后再逐项调整连接参数。
+新录制的`PREVIOUS_ANALYSIS`留空。对同一个H5/CFG做参数复核时，填写上一份输出的`pre_experiment`目录，
+继承修改前后参数和revision；换H5或CFG后必须清空，程序拒绝串用旧数据历史。
+分析只读输入，不连接设备、不触发Probe，每次结果另存到`data/<新时间>_data/pre_experiment/`。
+`parameters.yaml`保存实际生效参数，`network/network_parameter_history.json`记录历史。
+
+图在该输出目录的`network/`下：`baseline_raster.png`看活动时序和记录缺口，
+`burst_overview.png`看burst检测范围，`spontaneous_network_all_edges.png`看完整连接，
+`spontaneous_network_selected_sites.png`核对中心和三个物理最近邻。
+新候选人工确认后，再手动填写Probe中心及本轮采集配置；网络调参不会改变Probe的配对6/10判据。
+
 示例：
 
 ```bash

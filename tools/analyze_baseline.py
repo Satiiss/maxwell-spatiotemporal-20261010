@@ -20,6 +20,19 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+# Edit this section, then run: python -B tools/analyze_baseline.py
+H5_PATH = ""  # New, closed 600-second Network recording.
+CFG_PATH = ""  # CFG matching that recording, not merely the same date.
+WELL = 0  # GUI Well 1 corresponds to Python well 0.
+PREVIOUS_ANALYSIS = ""  # Empty for a NEW recording; same-input parameter review uses its pre_experiment directory.
+NETWORK_PARAMETERS = {
+    "pair_bin_ms": None,                 # None uses YAML; default 1.0 ms.
+    "pair_peak_ratio_threshold": None,   # YAML default 20.0.
+    "pair_min_shared_bursts": None,      # YAML default 30; strict >30.
+    "pair_min_abs_delay_ms": None,       # YAML default 5.0 ms; strict >5 ms.
+}
+# End editable section. Burst/stable-electrode settings remain in baseline_analysis.yaml.
+
 from analysis.utils.io import read_session, read_burst_table
 from analysis.utils.spontaneous import analyze_spontaneous_network, select_network_candidates
 from analysis.utils.network_plots import render_network_figures
@@ -109,6 +122,10 @@ def run(args):
         if not path.is_file():
             raise ValueError(f"文件不存在：{path}")
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    overrides = {key: value for key, value in getattr(args, "network_parameters", {}).items() if value is not None}
+    if set(overrides) - PAIR_FIELDS:
+        raise ValueError("文件顶部仅开放四个pair连接参数；burst和stable-electrode参数保留原配置")
+    config["network"].update(overrides)
     validate_config(config)
     burst_path = Path(args.bursts_csv).expanduser().resolve() if args.bursts_csv else None
     inputs = dict(h5=file_reference(h5), cfg=file_reference(cfg, True), well=args.well,
@@ -266,15 +283,23 @@ def run(args):
 
 
 def parser():
+    def input_path(value):
+        if not value:
+            return None
+        path = Path(value).expanduser()
+        return str(path if path.is_absolute() else ROOT / path)
+
     command = argparse.ArgumentParser(description="自发基线burst、完整连接出入度Map及候选中心；无硬件操作")
-    command.add_argument("--h5", required=True)
-    command.add_argument("--cfg", required=True)
-    command.add_argument("--well", type=int, default=0, help="Python从0计数；界面Well 1对应0")
+    command.add_argument("--h5", default=input_path(H5_PATH), required=not bool(H5_PATH))
+    command.add_argument("--cfg", default=input_path(CFG_PATH), required=not bool(CFG_PATH))
+    command.add_argument("--well", type=int, default=WELL, help="Python从0计数；界面Well 1对应0")
     command.add_argument("--config", default=str(ROOT/"config/baseline_analysis.yaml"))
     command.add_argument("--bursts-csv", help="可选人工复核的start_sec,end_sec；相对H5首帧")
-    command.add_argument("--previous-run", help="本项目旧结果目录；继承参数历史，仅允许修改四个pair参数")
+    command.add_argument("--previous-run", default=input_path(PREVIOUS_ANALYSIS),
+                         help="本项目旧结果目录；继承参数历史，仅允许修改四个pair参数")
     command.add_argument("--keep-low-outdegree", action="store_true", help="人工选择保持低出度参数；须提供旧结果和原因")
     command.add_argument("--review-reason", default="")
+    command.set_defaults(network_parameters=dict(NETWORK_PARAMETERS))
     return command
 
 
