@@ -103,7 +103,7 @@ class ExperimentRunner:
                 analysis_pipeline_deferred=True))
             return
         if not self.backend.realtime:
-            if not (self.system["manual_inputs"].get("additional_probe") or self.system["manual_inputs"].get("repeat_probe")):
+            if not self.system["manual_inputs"].get("candidate_centers"):
                 self.system["manual_inputs"]["candidate_centers"] = self.backend.centers
             if self.stimulation["probe"]["threshold_rule"] is None:
                 self.stimulation["probe"]["threshold_rule"] = "mean_plus_3sd"
@@ -112,7 +112,7 @@ class ExperimentRunner:
         manual = self.system["manual_inputs"]
         self.units = build_local_units(self.backend.mapping, centers,
             manual["minimum_center_distance_pitches"] * manual["electrode_pitch_um"],
-            additional=bool(manual.get("additional_probe") or manual.get("repeat_probe")), ranks=manual.get("candidate_ranks"))
+            ranks=manual.get("candidate_ranks"))
         network_review = manual.get("network_review_record")
         if network_review:
             shutil.copy2(network_review, self.run_dir / "pre_experiment" / Path(network_review).name)
@@ -193,6 +193,14 @@ class ExperimentRunner:
         else:
             session = self.spontaneous(self.run_dir / "pre_experiment" / "01_spontaneous", "manual_baseline",
                                        "01_pre_spont", duration)
+        if self.stimulation["probe"]["threshold_rule"] == "paired_pre_stim_ratio":
+            self.background = None  # All scoring uses the same trial's prestimulus window.
+            atomic_json(self.run_dir / "pre_experiment/baseline_statistics.json", dict(
+                threshold_rule="paired_pre_stim_ratio", h5=str(session.path),
+                duration_sec=session.duration_sec, scoring_background="same_trial_prestimulus",
+                paired_baseline_window_ms=[-50., -10.], response_window_ms=[10., 50.]))
+            logging.info("配对评分使用同次刺激前窗；600秒Network仅作选点来源，不计算全局背景门槛")
+            return
         self.state("ANALYZE_PROBE_BACKGROUND", h5=str(session.path))
         if manual.get("baseline_bursts_csv"):
             bursts = read_burst_table(manual["baseline_bursts_csv"])

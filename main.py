@@ -121,10 +121,13 @@ def validate(system, stimulation, hardware=False, probe_only=False):
             raise ValueError("请填写实际electrode_map.cfg_path；当前允许留空生成代码")
         if not system["culture"].get("id") or system["culture"].get("div") is None:
             raise ValueError("真实实验前须填写culture.id与culture.div")
-        if (probe_only and not system["manual_inputs"].get("additional_probe")
-                and not system["manual_inputs"].get("repeat_probe")
-                and len(system["manual_inputs"]["candidate_centers"]) not in (5, 6)):
-            raise ValueError("真实实验前须填写5–6个手动审阅的候选中心电极")
+        if probe_only:
+            from analysis.utils.io import parse_cfg
+            from python.site_selection import build_local_units
+            manual = system["manual_inputs"]
+            build_local_units(parse_cfg(cfg), manual["candidate_centers"],
+                manual["minimum_center_distance_pitches"] * manual["electrode_pitch_um"],
+                ranks=manual.get("candidate_ranks"))
         if probe_only and stimulation["probe"]["threshold_rule"] not in ("mean_plus_3sd", "mean_plus_3variance", "paired_pre_stim_ratio"):
             raise ValueError("probe.threshold_rule尚未明确：选择三倍标准差、三倍方差或paired_pre_stim_ratio")
         for key in (("baseline_h5", "baseline_bursts_csv", "network_review_record") if probe_only else ()):
@@ -150,7 +153,17 @@ def make_plan(system, stimulation, probe_only=False, formal_units=None):
     if probe_only:
         from analysis.utils.probe import minimum_probe_successes
         centers = system["manual_inputs"]["candidate_centers"]
+        units = []
+        cfg = system["electrode_map"].get("cfg_path")
+        if cfg and Path(cfg).is_file() and centers:
+            from analysis.utils.io import parse_cfg
+            from python.site_selection import build_local_units
+            manual = system["manual_inputs"]
+            units = build_local_units(parse_cfg(cfg), centers,
+                manual["minimum_center_distance_pitches"] * manual["electrode_pitch_um"],
+                ranks=manual.get("candidate_ranks"))
         return dict(execution_scope="probe_only", stages=[], formal_trial_count=0,
+                    culture=system["culture"], candidate_units=units,
                     min_success_trials=minimum_probe_successes(stimulation["probe"]),
                     additional_probe=bool(system["manual_inputs"].get("additional_probe")),
                     repeat_probe=bool(system["manual_inputs"].get("repeat_probe")),
@@ -272,6 +285,18 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
             snapshot.mkdir()
             for name, cfg in (("system", system), ("stimulation", stimulation)):
                 (snapshot / f"{name}.yaml").write_text(yaml.safe_dump(cfg, allow_unicode=True), encoding="utf-8")
+            if probe_only and plan["candidate_units"]:
+                from analysis.utils.io import parse_cfg
+                from python.figures import unit_map
+                from python.utils.persistence import write_csv
+                from shutil import copy2
+                cfg_path = Path(system["electrode_map"]["cfg_path"])
+                archived_cfg = run_dir / (datetime.now().strftime("%Hh%Mm%Ss") + ".cfg")
+                copy2(cfg_path, archived_cfg)
+                unit_map(parse_cfg(archived_cfg), plan["candidate_units"], run_dir / "pre_experiment/candidate_units")
+                write_csv(run_dir / "pre_experiment/candidate_sites.csv", [dict(
+                    unit_id=u["unit_id"], center=u["center"], electrodes=";".join(map(str, u["electrodes"])),
+                    distances_um=";".join(map(str, u["distances_um"]))) for u in plan["candidate_units"]])
             atomic_json(run_dir / "dry_run.json", dict(status="plan_only", hardware_contacted=False, **plan))
             return run_dir
         if mode == "hardware":

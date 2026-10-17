@@ -1,5 +1,8 @@
 # 新增候选unit的独立Probe
 
+日常Probe已统一为根目录`run_probe.py`：填写中心列表，自动选最近三个记录电极，固定命令手动启动。
+不再需要新增补测模式、旧run目录或中间配置；见[PROBE.md](PROBE.md)。以下仅保留为旧操作记录。
+
 普通初次Probe仍要求5–6个中心。补测须显式设置manual_inputs.additional_probe，
 引用additional_probe_from原Probe目录。已有候选JSON保留原rank；直接输入中心时自动分配新的unit序号。
 补测支持1–10个unit；每unit仍严格为中心及当前CFG物理最近3个记录电极，不自动替换。

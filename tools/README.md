@@ -2,6 +2,9 @@
 
 本目录集中存放额外的离线分析、记录检查、Probe复核和绘图入口，以及它们的专用辅助模块。命令在实验根目录执行，不连接MaxWell、不重新刺激。结果仍另存到实验的 `data/`，保留原H5、CFG和配置。
 
+日常Probe使用根目录`run_probe.py`，只改中心列表即可自动匹配三个物理最近邻；
+不需要以下两个旧准备工具，见根目录[PROBE.md](../PROBE.md)。它们仅为兼容旧操作记录保留。
+
 | 文件 | 用途 |
 |---|---|
 | `analyze_baseline.py` | 自发基线burst、网络与候选分析 |
@@ -33,4 +36,4 @@ python -B tools/plot_probe_rasters.py --run data/20261011_152853_data --electrod
 
 纵轴为全部记录电极的图：`aligned_electrodes.pdf`（全部trial叠加）、`electrode_artifact_zoom.pdf`（−5至10ms）和`trial_01_electrodes.pdf`等逐次图。每行一个实际记录电极，按真实electrode ID排序，静默电极保留；刻度只显示部分ID以保持可读，完整对应表为`electrode_rows.csv`。`aligned_trials.pdf`的每行则仍是一次刺激。
 
-`scripts/prepare_probe_routing.py`涉及SDK服务器软件路由，继续放在`scripts/`；实验仍通过根目录的`main.py`启动。目录迁移只更新文件位置、引用和命令，不改变分析公式、刺激配置或数据保存位置。
+`scripts/prepare_probe_routing.py`涉及SDK服务器软件路由，继续放在`scripts/`；Probe通过根目录`run_probe.py`启动，正式实验通过`run_formal.py`启动，内部复用`main.py`的运行与保存逻辑。

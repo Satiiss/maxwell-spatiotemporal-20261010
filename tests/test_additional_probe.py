@@ -51,8 +51,7 @@ class AdditionalProbeChecks(unittest.TestCase):
         self.stim["probe"]["min_success_trials"] = 6
 
     def test_four_additional_units_keep_original_ranks_and_reject_reuse(self):
-        with self.assertRaises(ValueError):
-            build_local_units(self.mapping, self.centers[2:], 52.5)
+        self.assertEqual(len(build_local_units(self.mapping, self.centers[2:], 52.5)), 4)
         units = validate_additional_probe(self.system, self.stim)
         self.assertEqual([u["unit_id"] for u in units], [f"candidate_{i:02d}" for i in range(7, 11)])
         self.system["manual_inputs"]["candidate_centers"][0] = self.centers[0]
