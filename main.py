@@ -180,13 +180,19 @@ def make_plan(system, stimulation, probe_only=False, formal_units=None):
     formal = stimulation["formal"]
     rounds = formal["trials_per_condition"]
     pulse_duration = pulse_duration_sec(stimulation["protocol"])
+    initial_delay = stimulation["protocol"]["sequence_initial_delay_samples"] * 50e-6
+    settle = float(system["routing"]["settle_wait_ms"]) / 1000
     stage_rows = [dict(stage=stage, conditions=len(conditions), trials=len(conditions) * rounds,
-                       nominal_duration_sec=sum(next_onset_interval(c, formal, pulse_duration) for c in conditions) * rounds)
+                       nominal_duration_sec=sum(next_onset_interval(c, formal, pulse_duration) + initial_delay + settle
+                                                for c in conditions) * rounds)
                   for stage, conditions in stages]
     duration = sum(r["nominal_duration_sec"] for r in stage_rows) + formal["pre_spontaneous_sec"] + formal["post_spontaneous_sec"]
     duration += (len(stage_rows) - 1) * formal["rest_between_stages_sec"] + formal["rest_after_last_stage_sec"]
+    duration += formal["recording_tail_sec"]
     return dict(execution_scope="full", stages=stage_rows, formal_trial_count=sum(r["trials"] for r in stage_rows),
                 formal_nominal_duration_sec=duration, temporal_interval_mode=formal["temporal_interval_mode"],
+                trial_interval_sec=formal["trial_interval_sec"], sequence_initial_delay_sec=initial_delay,
+                routing_settle_sec=settle, switch_policy="complete_sequence_and_rest_before_switch",
                 raw_uncompressed_bytes_at_1024_channels_20khz=duration * 1024 * 20000 * 2,
                 pending_inputs=["cfg_path", "culture", "formal_selection"],
                 full_analysis_deferred=True)

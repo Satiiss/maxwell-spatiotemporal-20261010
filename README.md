@@ -101,7 +101,7 @@ spatiotemporal_20261010/
 
 真实执行前必须明确选择，程序不隐式将方差替换成标准差。模拟模式临时使用mean_plus_3sd，并在本次参数快照中标明；原始配置仍保持null。配对规则使用`--headless`终端入口；当前GUI尚无此选项，不用于该规则。
 
-用户已确认 `formal.temporal_interval_mode: after_second`：一对时序刺激的第二个双相脉冲完整结束后，等待1s，再开始下一对。因此第一脉冲起始间隔为dt+第二双相脉冲总时长+1s；单相300µs、相间隔0时，总时长为600µs。每个固定dt循环交叉12个有向电极对，共50轮、600trial，全部完成后休息5min，再进入下一个dt。`onset_to_onset`仅保留为其他协议的可配置选项，不用于本次确认的方案。
+正式入口使用 `formal.temporal_interval_mode: after_second`：每条Sequence最后一个双相脉冲完整结束后静息，再切换下一组、等待settling并发送。单电极和同步条件也遵循这个顺序。静息默认取`formal.trial_interval_sec=1.0`，可在`run_formal.py`顶部用`INTER_SEQUENCE_REST_SEC`覆盖，例如3.0秒。原连接和Sequence对象保持到等待完成；时间护栏从发送接口返回后保守计算，计入初始延迟，覆盖最后脉冲的50ms响应窗。单相300µs、相间隔0时，双相总时长为600µs。每个固定dt循环交叉12个有向电极对，共50轮、600trial，完成后休息5min，再进入下一个dt。`onset_to_onset`仅保留兼容其他协议，本次正式入口固定after_second；Probe仍保持2Hz。
 
 ## 运行
 
@@ -322,7 +322,7 @@ python -B main.py --mode hardware --enable-hardware --headless \
 
 交替Probe结果如果经过人工复核满足正式标准，后续独立正式命令同样需带`--probe-order unit_interleaved --formal-from <已复核Probe目录>`，以校验Probe定义一致；还会核对检测阈值和gain。真实可路由性、快切延迟和末次spike完整性需要现场确认，软件模拟不能代替。
 
-完整raw记录很大：默认after_second调度下，正式阶段名义约176.9min；1024通道、20kHz、uint16未压缩估算约435GB，实际取决于映射通道数、压缩和路由/构建耗时。请配置足够空间的数据盘。保留raw是为了后续第一脉冲污染与同步伪迹排查。
+完整raw记录很大：默认after_second调度、1秒静息及50ms settling下，正式名义约181.9min；静息改为3秒后名义约361.9min。1024通道、20kHz、uint16默认未压缩估算约447GB，实际取决于映射通道数、压缩和通信/构建耗时。保留raw是为了后续第一脉冲污染与同步伪迹排查。
 
 ## 与Markdown及方案的对应
 

@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parent
 
 # Edit only this section. Paths inside SELECTION are relative to this file.
 CONFIG_DIR = "config"  # Set to your current culture's configuration directory.
+INTER_SEQUENCE_REST_SEC = None  # None uses formal.trial_interval_sec; e.g. 3.0 rests 3 seconds after the last pulse.
 SELECTION = {
     "culture_id": "",  # Must match CONFIG_DIR/system.yaml.
     "minimum_success_trials": 6,  # Reference policy; does not rewrite Probe scores.
@@ -34,6 +35,10 @@ def main():
           "仅执行零刺激联合路由检查" if args.routing_check else "执行真实正式采集")
     directory = Path(CONFIG_DIR).expanduser()
     system, stimulation = load_configuration(directory if directory.is_absolute() else ROOT / directory)
+    if INTER_SEQUENCE_REST_SEC is not None:
+        stimulation["formal"]["trial_interval_sec"] = INTER_SEQUENCE_REST_SEC
+    stimulation["formal"]["temporal_interval_mode"] = "after_second"
+    print(f"正式每条Sequence最后一个脉冲结束后静息 {stimulation['formal']['trial_interval_sec']} 秒，随后切换并稳定")
     run = execute(system, stimulation, mode="hardware", formal_selection=Path(__file__),
                   dry_run=not args.enable_hardware, formal_routing_check=args.routing_check)
     plan = json.loads((run / "experiment_plan.json").read_text(encoding="utf-8"))

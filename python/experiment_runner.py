@@ -222,15 +222,31 @@ class ExperimentRunner:
     def one_trial(self, condition, round_index, interval_sec, current, total, stage, deadline=None):
         self.reporter.check()
         protocol = self.stimulation["protocol"]
+        formal = condition.kind != "probe"
+        if formal:
+            # send() may acknowledge before device execution finishes. Keep the old
+            # connections AND Sequence alive through the complete sequence and quiet interval.
+            previous = getattr(self, "_formal_next_switch_at", None)
+            guards = [value for value in (previous, deadline) if value is not None]
+            if self.backend.realtime and guards:
+                self.reporter.wait_until(max(guards))
+            self._formal_sequence = None
         commands = waveform_commands(condition, protocol, self.backend.lsb_mv, self.event_id)
         sequence = self.backend.prepare_sequence(condition, commands, self.event_id, protocol)
         self.backend.switch(condition.electrodes)
-        if self.backend.realtime and deadline is not None:
+        if formal and not self.backend.realtime:
+            self.backend.advance(float(self.system["routing"]["settle_wait_ms"]) / 1000)
+        if not formal and self.backend.realtime and deadline is not None:
             if time.monotonic() > deadline + .01:
                 logging.warning("trial %d 准备耗时导致调度延迟 %.3fs；真实时间以H5事件为准", self.trial_id, time.monotonic() - deadline)
             self.reporter.wait_until(deadline)
         onset_monotonic = time.monotonic()
         epoch, mock_times = self.backend.stimulate(sequence)
+        if formal:
+            self._formal_sequence = sequence
+            guard_sec = protocol["sequence_initial_delay_samples"] * 50e-6 + interval_sec
+            # Anchor AFTER acknowledgement: this is conservative even if send() blocks.
+            self._formal_next_switch_at = time.monotonic() + guard_sec
         del sequence
         ids = [self.event_id, self.event_id + 1] if condition.kind == "temporal" else [self.event_id]
         estimate = epoch - self.current_log.origin + protocol["sequence_initial_delay_samples"] * 50e-6
@@ -244,6 +260,11 @@ class ExperimentRunner:
                    routing_mode=("unit_pool_fast" if self.stimulation["probe"]["order"] == "unit_interleaved"
                                  else "single_connect") if condition.kind == "probe" else self.system["routing"]["mode"],
                    interval_sec=interval_sec, response_anchor="second" if condition.kind == "temporal" else "first")
+        if formal:
+            row.update(sequence_guard_sec=guard_sec,
+                switch_policy="complete_sequence_and_rest_before_switch",
+                post_pulse_rest_sec=(self.stimulation["formal"]["trial_interval_sec"]
+                    if self.stimulation["formal"]["temporal_interval_mode"] == "after_second" else None))
         self.current_log.add_trial(row)
         self.audit.add("stim_send", epoch_sec=epoch, block=self.current_log.block, phase=self.current_log.phase,
                        segment_name=self.current_log.segment_name, trial_id=self.trial_id,
@@ -259,8 +280,8 @@ class ExperimentRunner:
                            response_count="待文件关闭后按H5事件计算", h5=self.current_log.segment_name,
                            map_path=str(self.run_dir / "pre_experiment" / "candidate_units.png"))
         if not self.backend.realtime:
-            self.backend.advance(interval_sec)
-        return onset_monotonic + interval_sec
+            self.backend.advance(guard_sec if formal else interval_sec)
+        return self._formal_next_switch_at if formal else onset_monotonic + interval_sec
 
     def probes(self):
         if self.stimulation["probe"]["order"] == "unit_interleaved":
@@ -418,6 +439,7 @@ class ExperimentRunner:
             # Ensure the final pulse, especially dt=1s, and response window complete before disconnect.
             if self.backend.realtime:
                 self.reporter.wait_until(deadline)
+            self._formal_sequence = None
             self.backend.disconnect_active() if self.backend.realtime else self.backend.switch(())
             rest = cfg["rest_after_last_stage_sec"] if stage == stages[-1][0] else cfg["rest_between_stages_sec"]
             self.reporter.wait(rest, "阶段间休息并继续录制", realtime=self.backend.realtime, stage_completed=stage)

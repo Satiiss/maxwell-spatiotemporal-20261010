@@ -197,6 +197,7 @@ class FormalSelectionChecks(unittest.TestCase):
         start, end = template.index("SELECTION = {"), template.index("# End editable section")
         template = template[:start] + "SELECTION = " + repr(self.selection) + "\n" + template[end:]
         template = template.replace('CONFIG_DIR = "config"', 'CONFIG_DIR = ' + repr(str(config)))
+        template = template.replace("INTER_SEQUENCE_REST_SEC = None", "INTER_SEQUENCE_REST_SEC = 3.0")
         # This case only tests the default no-device entry, using explicit manual selections.
         selected = copy.deepcopy(self.selection)
         for unit in selected["units"]:
@@ -213,6 +214,9 @@ class FormalSelectionChecks(unittest.TestCase):
         outputs = list((self.root / "outputs").glob("*/dry_run.json"))
         self.assertEqual(len(outputs), 1)
         self.assertFalse(json.loads(outputs[0].read_text())["hardware_contacted"])
+        plan = json.loads((outputs[0].parent / "experiment_plan.json").read_text())
+        self.assertEqual(plan["trial_interval_sec"], 3.)
+        self.assertEqual(plan["temporal_interval_mode"], "after_second")
 
 
 if __name__ == "__main__":

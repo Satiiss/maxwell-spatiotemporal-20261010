@@ -49,9 +49,15 @@ def pulse_duration_sec(protocol):
 
 
 def next_onset_interval(condition, formal_cfg, pulse_duration_sec):
+    if isinstance(formal_cfg["trial_interval_sec"], bool):
+        raise ValueError("正式trial间隔必须为有限正数")
     interval = float(formal_cfg["trial_interval_sec"])
-    if condition.kind == "temporal" and formal_cfg["temporal_interval_mode"] == "after_second":
-        # The complete second biphasic waveform must end before the one-second rest starts.
+    if not math.isfinite(interval) or interval <= 0:
+        raise ValueError("正式trial间隔必须为有限正数")
+    if formal_cfg["temporal_interval_mode"] == "after_second":
+        if interval < .05:
+            raise ValueError("正式脉冲后静息至少0.05秒，以保留完整50ms响应窗")
+        # Rest after the last complete pulse, including single/synchronous conditions.
         return condition.dt_ms / 1000 + pulse_duration_sec + interval
     if interval < condition.dt_ms / 1000 + pulse_duration_sec + 0.05:
         raise ValueError("第一脉冲间隔不足：会与第二脉冲或其50ms响应窗重叠；请选after_second或增大间隔")
