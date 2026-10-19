@@ -74,6 +74,74 @@ class SpikesEventsChecks(unittest.TestCase):
         self.assertEqual(len(session.mapping), len(self.mapping))
         self.assertEqual(session.unmapped_spike_count, 0)
 
+    def json_fixture(self, mode='valid', raw=False, stimulus=False):
+        path = self.fixture(raw=raw)
+        origin, token = 123456789, 'a'*32
+        start = {BOUNDARY_PREFIX:'start', 'token':token}
+        end = {BOUNDARY_PREFIX:'end', 'token':token}
+        start_id = BOUNDARY_IDS['start']
+        if mode == 'wrong_token': end['token'] = 'b'*32
+        if mode == 'missing_token': del start['token']
+        if mode == 'wrong_role': start[BOUNDARY_PREFIX] = ['start']
+        if mode == 'reserved_unrelated': start = {'other':'start'}
+        if mode == 'wrong_id': start_id = 42
+        start_message = json.dumps(start)+'\n'
+        if mode == 'duplicate_key':
+            start_message = '{"recording_boundary_v1":"end","recording_boundary_v1":"start","token":"'+token+'"}'
+        if mode == 'malformed': start_message = '{"recording_boundary_v1":'
+        events = [(origin,1,start_id,start_message),
+                  (origin+60074,1,BOUNDARY_IDS['end'],json.dumps(end)+'\n')]
+        if mode == 'missing_end': events.pop()
+        if mode == 'duplicate_start': events.append(events[0])
+        if stimulus: events.insert(1,(origin+40000,1,7,json.dumps({'condition':'test','pulse':'1'})))
+        dtype = np.dtype([('frameno','<i8'),('eventtype','<u4'),('eventid','<u4'),
+                          ('eventmessage',h5py.string_dtype('utf-8'))])
+        with h5py.File(path,'r+') as handle:
+            del handle['data_store/data0000/events']
+            handle['data_store/data0000'].create_dataset('events',data=np.array(events,dtype=dtype))
+        return path
+
+    def test_sdk_json_vlen_messages_define_same_exact_hardware_frame_origin(self):
+        path = self.json_fixture(stimulus=True)
+        before = sha256(path)
+        session = read_session(path,self.cfg)
+        self.assertEqual(session.time_origin_source,'h5_boundary_events')
+        self.assertEqual(session.frame_origin,123456789)
+        self.assertAlmostEqual(session.duration_sec,3.0037)
+        np.testing.assert_allclose(session.times,[2.05])
+        self.assertEqual(session.amplitudes.tolist(),[-2.])
+        self.assertEqual(next(e['time_sec'] for e in session.events if e['event_id']==7),2.)
+        self.assertEqual(json.loads(session.events[0]['eventmessage'])[BOUNDARY_PREFIX],'start')
+        self.assertEqual(sha256(path),before)
+
+    def test_invalid_json_boundary_messages_never_fall_back_to_raw_frames(self):
+        for mode in ('wrong_token','missing_token','wrong_role','reserved_unrelated',
+                     'wrong_id','duplicate_key','malformed','missing_end','duplicate_start'):
+            with self.subTest(mode=mode), self.assertRaises(ValueError):
+                read_session(self.json_fixture(mode,raw=True),self.cfg)
+
+    def test_readonly_short_check_accepts_sdk_json_without_sdk_or_input_writes(self):
+        import contextlib
+        import io
+        from tools import check_formal_recording as tool
+        path = self.json_fixture()
+        before = sha256(path),sha256(self.cfg),set(self.root.iterdir())
+        output = io.StringIO()
+        with patch.object(tool.runpy,'run_path',return_value=dict(CONFIG_DIR='config')), \
+             patch.object(tool,'load_configuration',return_value=(self.system,self.stim)), \
+             patch.object(tool,'check_environment') as environment, \
+             patch.object(tool,'check_recording') as recording, \
+             patch.object(tool,'MaxLabBackend') as backend, \
+             patch('sys.argv',['check_formal_recording.py','--h5',str(path)]), \
+             contextlib.redirect_stdout(output):
+            tool.main()
+        environment.assert_not_called()
+        recording.assert_not_called()
+        backend.assert_not_called()
+        self.assertIn('存储检查通过',output.getvalue())
+        self.assertIn('h5_boundary_events',output.getvalue())
+        self.assertEqual((sha256(path),sha256(self.cfg),set(self.root.iterdir())),before)
+
     def test_missing_duplicate_mismatched_and_reversed_markers_cannot_fall_back(self):
         for mode in ('missing_start','missing_end','duplicate','wrong_token','reversed','wrong_id','none'):
             with self.subTest(mode=mode), self.assertRaises(ValueError):
@@ -312,6 +380,32 @@ class SpikesEventsChecks(unittest.TestCase):
         self.assertTrue(timing['verified'])
         self.assertEqual(timing['pulse_count'],204)
         self.assertEqual(timing['time_origin_source'],'h5_boundary_events')
+
+    def test_formal_three_segments_accept_sdk_json_and_keep_stimulus_alignment(self):
+        original = MockBackend.finish_segment
+        def sdk_json(backend):
+            path = original(backend)
+            with h5py.File(path,'r+') as handle:
+                dataset = handle['data_store/data0000/events']
+                rows = dataset[:]
+                for row in rows:
+                    words = row['eventmessage'].decode().split()
+                    row['eventmessage'] = (json.dumps(dict(zip(words[::2],words[1::2])))+'\n').encode()
+                dataset[:] = rows
+            return path
+        system, stim = self.mocked()
+        with patch.object(MockBackend,'finish_segment',sdk_json), patch('python.experiment_runner.unit_map'):
+            out = execute(system,stim,formal_selection=self.selection_file)
+        files = list((out/'raw_data').rglob('*.raw.h5'))
+        self.assertEqual(len(files),3)
+        for path in files:
+            session = read_session(path,self.cfg)
+            self.assertEqual(session.time_origin_source,'h5_boundary_events')
+            self.assertTrue(all(isinstance(json.loads(e['eventmessage']),dict) for e in session.events))
+        stim_path = next(p for p in files if p.parent.name=='02_stim')
+        timing = json.loads((stim_path.parent/'segment_time_meta.json').read_text(encoding='utf-8'))
+        self.assertTrue(timing['verified'])
+        self.assertEqual(timing['pulse_count'],204)
 
     def test_missing_first_segment_boundary_stops_before_any_formal_sequence(self):
         original = MockBackend.finish_segment

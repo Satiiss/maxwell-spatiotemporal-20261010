@@ -68,3 +68,5 @@ python -B tools/plot_probe_rasters.py --run data/20261011_152853_data --electrod
 `data/<时间>_recording_check/`，不修改源配置或旧结果，不自动进入正式实验。
 它不初始化/下载/校准，不改阈值或gain，不发送DAC或刺激单元命令；不应与其他采集同时运行。
 省略硬件标志只显示配置，不连接设备。实际采集设置会打印并写入`recording_check.json`供核对。
+已有文件使用`python -B tools/check_formal_recording.py --h5 /实际路径/storage_check.raw.h5`
+只读复核；该选项与硬件标志互斥，不连接SDK、不重录、不写回原文件。

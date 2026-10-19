@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import csv
+import json
 import re
 import numpy as np
 import h5py
@@ -48,6 +49,15 @@ class Session:
     time_origin_source: str = "raw_frame_numbers"
 
 
+def _unique_event_properties(pairs):
+    properties = {}
+    for key, value in pairs:
+        if key in properties:
+            raise ValueError("事件JSON属性包含重复键")
+        properties[key] = value
+    return properties
+
+
 def _event_bounds(events):
     markers = []
     for row in events:
@@ -55,12 +65,33 @@ def _event_bounds(events):
         if isinstance(message, bytes):
             message = message.decode("utf-8", errors="strict")
         message = str(message).strip()
-        if not message.startswith(BOUNDARY_PREFIX):
+        event_id = int(row["eventid"])
+        if message.startswith("{"):
+            try:
+                properties = json.loads(message, object_pairs_hook=_unique_event_properties)
+            except ValueError as exc:
+                if BOUNDARY_PREFIX in message or event_id in BOUNDARY_IDS.values():
+                    raise ValueError("录制边界事件JSON格式无效") from exc
+                continue
+            if BOUNDARY_PREFIX not in properties:
+                if event_id in BOUNDARY_IDS.values():
+                    raise ValueError("录制边界保留ID缺少标记属性")
+                continue
+            role, token = properties[BOUNDARY_PREFIX], properties.get("token")
+        elif message.startswith(BOUNDARY_PREFIX):
+            match = re.fullmatch(BOUNDARY_PREFIX + r" (start|end) token ([0-9a-f]{32})", message)
+            if not match:
+                raise ValueError("录制边界事件格式或ID无效")
+            role, token = match[1], match[2]
+        elif event_id in BOUNDARY_IDS.values():
+            raise ValueError("录制边界保留ID缺少有效标记")
+        else:
             continue
-        match = re.fullmatch(BOUNDARY_PREFIX + r" (start|end) token ([0-9a-f]{32})", message)
-        if not match or int(row["eventid"]) != BOUNDARY_IDS[match[1]]:
+        if (not isinstance(role, str) or role not in BOUNDARY_IDS
+                or not isinstance(token, str) or re.fullmatch(r"[0-9a-f]{32}", token) is None
+                or event_id != BOUNDARY_IDS[role]):
             raise ValueError("录制边界事件格式或ID无效")
-        markers.append((match[1], match[2], int(row["frameno"])))
+        markers.append((role, token, int(row["frameno"])))
     if not markers:
         return None
     starts = [r for r in markers if r[0] == "start"]

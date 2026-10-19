@@ -3,6 +3,8 @@
 本目录工具不依赖实验runner，也不调用硬件。公开API变更时同步更新本文。
 
 `read_session`支持无raw且有`recording_boundary_v1`起止事件的H5。
+兼容SDK保存的JSON属性消息（例如`{"recording_boundary_v1":"start","token":"<32位hex>"}`，可有末尾换行）
+及旧的纯文本消息；原始eventmessage保留不改写。JSON重复键、无效role/token、保留ID缺少标记均拒绝。
 起止标记必须唯一、同token、ID正确且结束帧大于开始帧；以标记帧定义分析区间，
 不把首个spike或主机时刻当作原点，也不声称标记等于文件首帧。
 `Session.time_origin_source`为`h5_boundary_events`或旧的`raw_frame_numbers`；

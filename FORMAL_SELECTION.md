@@ -17,6 +17,7 @@
 不含DAC或刺激单元命令；用官方Sequence.append()（返回Sequence本身），检查sequence_send返回值，
 Sequence对象保留至录制文件关闭。底层sequence_append在现场可返回空字符串，不能强求OK；
 最终以H5内实际记录的起止标记判定成功，不以append返回对象作为送达证据。
+SDK会将Event属性转为JSON保存；读取器同时识别JSON与旧纯文本消息，校验规则相同。
 不再直接mx.send(Event)：现场SDK该调用返回空字符串。也不把空返回当作成功。
 读回H5验证唯一、同token、先后正确的标记，以其硬件帧差定义分析区间，
 `time_origin_source=h5_boundary_events`，明确不声称起点是文件首帧；排除起点前和结束后的spikes。
@@ -30,6 +31,8 @@ Sequence对象保留至录制文件关闭。底层sequence_append在现场可返
 不initialize、不download、不offset、不修改阈值/gain、不发送DAC或刺激单元命令，也不进入正式实验。
 默认不加硬件标志只显示配置。检查通过只证明短录制的映射、无raw和实际H5时间标记，
 采集设置另行打印供核对；真实正式启动仍会按原流程初始化和录制600秒。
+已有短录制可通过`python -B tools/check_formal_recording.py --h5 /实际路径/storage_check.raw.h5`
+只读复核；不连接SDK、不重新录制、不修改原H5或结果文件，也不会进入正式实验。
 
 这种模式不能回看完整电压、重新检测spikes或进行依赖原始波形的排查/排序。
 文件大小取决于实际spike数，不能把raw的0字节说成整场数据为0字节；计划不虚构固定大小。
