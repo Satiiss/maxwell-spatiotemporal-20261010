@@ -1,12 +1,15 @@
 # 按中心列表运行Probe
 
 统一入口为根目录`run_probe.py`，与`run_formal.py`分别手动启动。
-在Python文件顶部编辑`CONFIG_DIR`、`CENTER_ELECTRODES`、必要时的`CULTURE_DIV`。
+在Python文件顶部编辑本轮`CULTURE_ID`、`CULTURE_DIV`、`BASELINE_H5`、`CFG_PATH`、
+`EVENT_THRESHOLD`、`AMPLIFIER_GAIN`和`CENTER_ELECTRODES`；`MIN_SUCCESS_TRIALS`默认6。
 同一培养物和记录配置下，日常只需修改中心列表。无需填写以前的Probe目录、候选JSON或补测/重测模式。
 
-`CONFIG_DIR`指向当前培养物已有的配置目录，提供培养物编号、CFG、600秒Network基线、gain及检测阈值。
+`CONFIG_DIR="config"`可继续使用项目原配置作为设备、路由、保存位置等默认值。
+顶部填写的本轮参数在内存中覆盖YAML；设为`None`时沿用YAML。换培养物时将以上字段全部填为新培养物的值，
+无需创建、复制或修改YAML。顶部相对路径按项目根目录解析，建议H5/CFG使用Linux绝对路径。
 即使该目录来自旧的补测准备工具，新入口也会忽略其中的旧模式、旧来源、旧候选编号和旧评审文件。
-不会修改原YAML。新培养物必须换成其自己的配置和中心，程序不会从历史结果推导中心。
+不会修改原YAML。实际生效的参数保存在新run快照中；新培养物必须使用自己的基线、CFG和中心。
 
 程序按列表顺序编号`candidate_01...N`；该编号只表示本轮顺序，不从旧轮次猜测编号。
 每个中心必须在当前CFG中，使用CFG的物理坐标匹配最近三个记录电极；距离相同时按电极ID排序。
@@ -19,7 +22,8 @@
 python -B run_probe.py
 ```
 
-输出每个unit的中心、四电极、邻居距离和总次数。新建run目录，保存实际生效的参数快照、CFG副本、
+输出本轮培养物、基线、CFG、检测阈值、gain以及每个unit的中心、四电极、邻居距离和总次数。
+新建run目录，保存实际生效的参数快照、CFG副本、
 `experiment_plan.json`及`pre_experiment/candidate_sites.csv`、`pre_experiment/candidate_units.png`。
 查看候选图时核对星形中心、三个邻居、真实坐标和本轮编号。全部10个中心对应40个位点、计划400次。
 提供了基线H5时，预演也会只读核对gain、检测阈值及完整通道—电极—坐标映射。

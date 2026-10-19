@@ -81,6 +81,27 @@ class CenterProbeChecks(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "重叠"):
             build_local_units(self.mapping, [self.centers[0], self.centers[0]+1], 0)
 
+    def test_current_culture_inputs_override_old_yaml_without_modifying_sources(self):
+        original = copy.deepcopy((self.system, self.stim))
+        before = sha256(self.cfg), sha256(self.baseline)
+        system, stim = configure_probe(self.system, self.stim, self.centers[:6],
+            culture_id="new_culture", culture_div=38, baseline_h5=self.baseline,
+            cfg_path=self.cfg, event_threshold=5., amplifier_gain=512)
+        plan = preflight(system, stim)
+        self.assertEqual(plan["probe_trial_count"], 240)
+        self.assertEqual(system["culture"], {"id": "new_culture", "div": 38})
+        self.assertEqual(system["manual_inputs"]["baseline_h5"], str(self.baseline))
+        self.assertEqual(system["electrode_map"]["cfg_path"], str(self.cfg))
+        self.assertEqual(system["maxwell"]["event_threshold"], 5.)
+        self.assertEqual(system["maxwell"]["amplifier_gain"], 512)
+        self.assertEqual((self.system, self.stim), original)
+        self.assertEqual((sha256(self.cfg), sha256(self.baseline)), before)
+        for kwargs in ({"culture_id": ""}, {"culture_id": True}, {"cfg_path": ""},
+                       {"baseline_h5": " "}, {"event_threshold": float("nan")},
+                       {"event_threshold": -1}, {"amplifier_gain": 0}):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                configure_probe(self.system, self.stim, self.centers[:6], **kwargs)
+
     def test_preflight_rejects_changed_h5_mapping_and_settings(self):
         system, stim = self.configured()
         with h5py.File(self.baseline, "r+") as handle:
@@ -99,6 +120,11 @@ class CenterProbeChecks(unittest.TestCase):
         before = sha256(self.cfg), sha256(self.baseline)
         with patch.object(run_probe, "CENTER_ELECTRODES", self.centers[:10]), \
              patch.object(run_probe, "CULTURE_DIV", 17), \
+             patch.object(run_probe, "CULTURE_ID", "current_top_fields"), \
+             patch.object(run_probe, "BASELINE_H5", str(self.baseline)), \
+             patch.object(run_probe, "CFG_PATH", str(self.cfg)), \
+             patch.object(run_probe, "EVENT_THRESHOLD", 5.), \
+             patch.object(run_probe, "AMPLIFIER_GAIN", 512), \
              patch("main.load_configuration", return_value=(self.system, self.stim)), \
              patch("python.maxwell_setup.MaxLabBackend") as backend, \
              patch.object(sys, "argv", ["run_probe.py"]):
@@ -108,6 +134,11 @@ class CenterProbeChecks(unittest.TestCase):
         plan = json.loads((run / "experiment_plan.json").read_text())
         self.assertEqual(plan["probe_trial_count"], 400)
         self.assertEqual(len(plan["candidate_units"]), 10)
+        import yaml
+        snapshot = yaml.safe_load((run / "config_snapshot/system.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(snapshot["culture"]["id"], "current_top_fields")
+        self.assertEqual(snapshot["manual_inputs"]["baseline_h5"], str(self.baseline))
+        self.assertEqual(snapshot["maxwell"]["event_threshold"], 5.)
         self.assertFalse(json.loads((run / "dry_run.json").read_text())["hardware_contacted"])
         self.assertTrue((run / "pre_experiment/candidate_units.png").is_file())
         with (run / "pre_experiment/candidate_sites.csv").open(encoding="utf-8-sig") as handle:
