@@ -43,6 +43,7 @@ class MaxLabBackend:
         self.monitor_log = None
         self.boundary_token = None
         self.boundary_end_sent = False
+        self.boundary_sequences = []
 
     def initialize(self, cfg):
         parent = self.system["maxwell"].get("api_parent")
@@ -159,11 +160,17 @@ class MaxLabBackend:
         return self.record_epoch
 
     def _record_boundary(self, role):
-        # Event only: no DAC command and no stimulation Sequence. H5 supplies the
-        # exact hardware frame; host acknowledgement time is never the time origin.
+        # The live SDK returns an empty response for a directly sent Event. Use
+        # the same checked sequence transport as stimulus events, with NO DAC or
+        # stimulation-unit commands. Keep it alive until the writer has closed.
         event = self.mx.Event(self.system["maxwell"]["well"], 1, BOUNDARY_IDS[role],
                               f"{BOUNDARY_PREFIX} {role} token {self.boundary_token}")
-        require_ok(self.mx.send(event), f"写入录制{role}帧事件")
+        seq = self.mx.Sequence("rec_boundary_" + uuid.uuid4().hex,
+                               initial_delay=100, persistent=False)
+        self.boundary_sequences.append(seq)
+        require_ok(self.mx.send_raw("sequence_append " + seq.token + "\n" + event.set()),
+                   f"准备录制{role}帧事件")
+        require_ok(self.mx.send_raw("sequence_send " + seq.token), f"写入录制{role}帧事件")
 
     def prepare_sequence(self, condition, commands, first_id, protocol):
         if not self.system["maxwell"]["raw_recording"] and first_id + (condition.kind == "temporal") >= BOUNDARY_IDS["start"]:
@@ -226,6 +233,8 @@ class MaxLabBackend:
                 self.saver.group_delete_all()
             except Exception as exc:
                 errors.append(str(exc))
+        if not self.recording and not self.file_open:
+            self.boundary_sequences.clear()
         if errors:
             raise RuntimeError("录制收尾失败：" + "; ".join(errors))
 

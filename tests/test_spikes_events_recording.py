@@ -87,16 +87,27 @@ class SpikesEventsChecks(unittest.TestCase):
         backend = MaxLabBackend(system, Reporter())
         backend.mx = MagicMock()
         backend.mx.send.return_value = 'OK'
+        backend.mx.send_raw.return_value = 'OK'
+        backend.mx.Sequence.side_effect = lambda name, **kwargs: MagicMock(token=name)
+        backend.mx.Event.side_effect = lambda well, kind, eid, props: MagicMock(
+            set=lambda: f'system_trigger_event {well} {kind} {eid} {props}')
         backend.mx.Timing.waitAfterRecording = 2
         backend.mx.Saving.return_value.group_define.return_value = 'OK'
         backend.array = MagicMock()
         backend.mapping = self.mapping
         return backend
 
-    def test_sdk_low_storage_skips_raw_groups_and_uses_only_boundary_event_commands(self):
+    def test_sdk_low_storage_uses_event_only_sequences_and_skips_raw_groups(self):
         backend = self.backend()
+        # Reproduce the real SDK's empty acknowledgement for direct Event sends.
+        backend.mx.send.return_value = ''
         with patch('python.maxwell_setup.time.sleep') as sleep:
             backend.start_segment(self.root, 'check')
+            self.assertEqual(len(backend.boundary_sequences), 1)
+            def writer_stopped():
+                # Neither marker sequence may be destroyed before saver closure.
+                self.assertEqual(len(backend.boundary_sequences), 2)
+            backend.mx.Saving.return_value.stop_file.side_effect = writer_stopped
             backend._close_recording()
         backend.mx.Saving.return_value.group_define.assert_not_called()
         self.assertEqual(backend.mx.Event.call_count, 2)
@@ -104,7 +115,18 @@ class SpikesEventsChecks(unittest.TestCase):
         self.assertEqual(ids, [BOUNDARY_IDS['start'], BOUNDARY_IDS['end']])
         self.assertIn(unittest.mock.call(1.0), sleep.call_args_list)
         self.assertIn(unittest.mock.call(2), sleep.call_args_list)
-        backend.mx.Sequence.assert_not_called()
+        self.assertEqual(backend.mx.Sequence.call_count, 2)
+        for call in backend.mx.Sequence.call_args_list:
+            self.assertEqual(call.kwargs, dict(initial_delay=100, persistent=False))
+        commands = [c.args[0] for c in backend.mx.send_raw.call_args_list]
+        self.assertEqual(len(commands), 4)
+        for append, send in zip(commands[::2], commands[1::2]):
+            head, event = append.split('\n')
+            self.assertEqual(send, head.replace('sequence_append ', 'sequence_send ', 1))
+            self.assertTrue(event.startswith('system_trigger_event 0 1 '))
+            self.assertNotIn('dac', event.lower())
+        self.assertEqual(backend.boundary_sequences, [])
+        backend.mx.send.assert_not_called()
         backend.mx.DAC.assert_not_called()
         backend.mx.initialize.assert_not_called()
         backend.mx.Saving.return_value.stop_recording.assert_called_once()
@@ -125,11 +147,25 @@ class SpikesEventsChecks(unittest.TestCase):
         backend = self.backend()
         with patch('python.maxwell_setup.time.sleep'):
             backend.start_segment(self.root, 'check')
-            backend.mx.send.side_effect = RuntimeError('end marker failed')
+            backend.mx.send_raw.side_effect = RuntimeError('end marker failed')
             with self.assertRaisesRegex(RuntimeError, 'end marker failed'):
                 backend._close_recording()
         backend.mx.Saving.return_value.stop_recording.assert_called_once()
         backend.mx.Saving.return_value.stop_file.assert_called_once()
+
+    def test_empty_boundary_sequence_ack_is_rejected_and_saver_still_closes(self):
+        for replies, error in ((['', 'OK', 'OK'], '准备录制start'),
+                               (['OK', '', 'OK', 'OK'], '写入录制start')):
+            with self.subTest(error=error):
+                backend = self.backend()
+                backend.mx.send_raw.side_effect = replies
+                with patch('python.maxwell_setup.time.sleep'):
+                    with self.assertRaisesRegex(RuntimeError, error):
+                        backend.start_segment(self.root, 'check')
+                    backend._close_recording()
+                backend.mx.Saving.return_value.stop_recording.assert_called_once()
+                backend.mx.Saving.return_value.stop_file.assert_called_once()
+                backend.mx.DAC.assert_not_called()
 
     def test_explicit_selection_mode_changes_only_runtime_and_raw_estimate_not_protocol(self):
         original = copy.deepcopy((self.system, self.stim))

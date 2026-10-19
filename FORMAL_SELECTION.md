@@ -13,7 +13,9 @@
 实际模式保存到新run的配置、计划、选点记录和block元数据。Probe继续要求raw。
 
 无raw时不能依靠`groups/*/frame_nos`：每段开始和结束分别发送只含标注的Event，
-使用保留ID 1048574/1048575及唯一token。它们不含DAC或刺激Sequence。
+使用保留ID 1048574/1048575及唯一token。每个标记通过只含初始延迟和Event的Sequence发送，
+不含DAC或刺激单元命令；检查sequence_append/send返回值，Sequence对象保留至录制文件关闭。
+不再直接mx.send(Event)：现场SDK该调用返回空字符串。也不把空返回当作成功。
 读回H5验证唯一、同token、先后正确的标记，以其硬件帧差定义分析区间，
 `time_origin_source=h5_boundary_events`，明确不声称起点是文件首帧；排除起点前和结束后的spikes。
 起点不取首个spike、不取主机时间；刺激时间仍取本段H5的实际刺激事件。
