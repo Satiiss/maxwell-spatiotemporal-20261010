@@ -14,7 +14,9 @@
 
 无raw时不能依靠`groups/*/frame_nos`：每段开始和结束分别发送只含标注的Event，
 使用保留ID 1048574/1048575及唯一token。每个标记通过只含初始延迟和Event的Sequence发送，
-不含DAC或刺激单元命令；检查sequence_append/send返回值，Sequence对象保留至录制文件关闭。
+不含DAC或刺激单元命令；用官方Sequence.append()（返回Sequence本身），检查sequence_send返回值，
+Sequence对象保留至录制文件关闭。底层sequence_append在现场可返回空字符串，不能强求OK；
+最终以H5内实际记录的起止标记判定成功，不以append返回对象作为送达证据。
 不再直接mx.send(Event)：现场SDK该调用返回空字符串。也不把空返回当作成功。
 读回H5验证唯一、同token、先后正确的标记，以其硬件帧差定义分析区间，
 `time_origin_source=h5_boundary_events`，明确不声称起点是文件首帧；排除起点前和结束后的spikes。
@@ -22,6 +24,12 @@
 结束标记后保持writer活动1秒再停录，之后另等SDK写盘时间；异常也执行停录和关文件。
 每段保存`recording_interval.json`，含来源、帧原点、采样率及区间长度。
 前600秒自发的起止标记与无raw检查通过后，才允许进入刺激；缺失/重复标记或意外raw组会停止。
+
+现场首次使用或SDK兼容问题修复后，可先运行`python -B tools/check_formal_recording.py --enable-hardware`。
+它只读取当前`run_formal.py`的CONFIG_DIR，在当前硬件采集状态下另录三秒spikes/events并读回核对，
+不initialize、不download、不offset、不修改阈值/gain、不发送DAC或刺激单元命令，也不进入正式实验。
+默认不加硬件标志只显示配置。检查通过只证明短录制的映射、无raw和实际H5时间标记，
+采集设置另行打印供核对；真实正式启动仍会按原流程初始化和录制600秒。
 
 这种模式不能回看完整电压、重新检测spikes或进行依赖原始波形的排查/排序。
 文件大小取决于实际spike数，不能把raw的0字节说成整场数据为0字节；计划不虚构固定大小。

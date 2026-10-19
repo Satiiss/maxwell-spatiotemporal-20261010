@@ -88,7 +88,11 @@ class SpikesEventsChecks(unittest.TestCase):
         backend.mx = MagicMock()
         backend.mx.send.return_value = 'OK'
         backend.mx.send_raw.return_value = 'OK'
-        backend.mx.Sequence.side_effect = lambda name, **kwargs: MagicMock(token=name)
+        def new_sequence(name, **kwargs):
+            seq = MagicMock(token=name)
+            seq.append.return_value = seq
+            return seq
+        backend.mx.Sequence.side_effect = new_sequence
         backend.mx.Event.side_effect = lambda well, kind, eid, props: MagicMock(
             set=lambda: f'system_trigger_event {well} {kind} {eid} {props}')
         backend.mx.Timing.waitAfterRecording = 2
@@ -104,9 +108,11 @@ class SpikesEventsChecks(unittest.TestCase):
         with patch('python.maxwell_setup.time.sleep') as sleep:
             backend.start_segment(self.root, 'check')
             self.assertEqual(len(backend.boundary_sequences), 1)
+            retained = []
             def writer_stopped():
                 # Neither marker sequence may be destroyed before saver closure.
                 self.assertEqual(len(backend.boundary_sequences), 2)
+                retained.extend(backend.boundary_sequences)
             backend.mx.Saving.return_value.stop_file.side_effect = writer_stopped
             backend._close_recording()
         backend.mx.Saving.return_value.group_define.assert_not_called()
@@ -119,10 +125,11 @@ class SpikesEventsChecks(unittest.TestCase):
         for call in backend.mx.Sequence.call_args_list:
             self.assertEqual(call.kwargs, dict(initial_delay=100, persistent=False))
         commands = [c.args[0] for c in backend.mx.send_raw.call_args_list]
-        self.assertEqual(len(commands), 4)
-        for append, send in zip(commands[::2], commands[1::2]):
-            head, event = append.split('\n')
-            self.assertEqual(send, head.replace('sequence_append ', 'sequence_send ', 1))
+        self.assertEqual(len(commands), 2)
+        for seq, send in zip(retained, commands):
+            self.assertEqual(send, 'sequence_send ' + seq.token)
+            seq.append.assert_called_once()
+            event = seq.append.call_args.args[0].set()
             self.assertTrue(event.startswith('system_trigger_event 0 1 '))
             self.assertNotIn('dac', event.lower())
         self.assertEqual(backend.boundary_sequences, [])
@@ -154,8 +161,7 @@ class SpikesEventsChecks(unittest.TestCase):
         backend.mx.Saving.return_value.stop_file.assert_called_once()
 
     def test_empty_boundary_sequence_ack_is_rejected_and_saver_still_closes(self):
-        for replies, error in ((['', 'OK', 'OK'], '准备录制start'),
-                               (['OK', '', 'OK', 'OK'], '写入录制start')):
+        for replies, error in ((['', 'OK'], '写入录制start'),):
             with self.subTest(error=error):
                 backend = self.backend()
                 backend.mx.send_raw.side_effect = replies
@@ -166,6 +172,88 @@ class SpikesEventsChecks(unittest.TestCase):
                 backend.mx.Saving.return_value.stop_recording.assert_called_once()
                 backend.mx.Saving.return_value.stop_file.assert_called_once()
                 backend.mx.DAC.assert_not_called()
+
+    def test_boundary_append_failure_stops_before_send_and_still_closes_file(self):
+        backend = self.backend()
+        good_factory = backend.mx.Sequence.side_effect
+        def broken_sequence(name, **kwargs):
+            seq = good_factory(name, **kwargs)
+            if not backend.boundary_sequences:
+                seq.append.return_value = None
+            return seq
+        backend.mx.Sequence.side_effect = broken_sequence
+        with patch('python.maxwell_setup.time.sleep'):
+            with self.assertRaisesRegex(RuntimeError, 'SDK未返回Sequence对象'):
+                backend.start_segment(self.root, 'check')
+            backend.mx.send_raw.assert_not_called()
+            backend._close_recording()
+        backend.mx.Saving.return_value.stop_file.assert_called_once()
+
+    def test_short_recording_default_never_connects_or_creates_output(self):
+        from tools import check_formal_recording as tool
+        with patch.object(tool.runpy, 'run_path', return_value=dict(CONFIG_DIR='config')), \
+             patch.object(tool, 'load_configuration', return_value=(self.system,self.stim)), \
+             patch.object(tool, 'check_environment') as environment, \
+             patch.object(tool, 'check_recording') as recording, \
+             patch('sys.argv', ['check_formal_recording.py']):
+            tool.main()
+        environment.assert_not_called()
+        recording.assert_not_called()
+
+    def short_recording_sdk(self, fixture, output):
+        import shutil
+        mx = self.backend().mx
+        mx.Array.return_value.load_config.return_value = 'OK'
+        mx.Saving.return_value.stop_file.side_effect = lambda: shutil.copyfile(
+            fixture, output/'storage_check.raw.h5')
+        return mx
+
+    def test_short_recording_reads_real_h5_contract_without_initializing_or_routing(self):
+        from tools.check_formal_recording import check_recording
+        path = self.fixture()
+        with h5py.File(path, 'r+') as handle:
+            rows = handle['data_store/data0000/events'][:]
+            del handle['data_store/data0000/events']
+            handle['data_store/data0000'].create_dataset('events',data=rows[rows['eventid']!=7])
+        output = self.root/'short_check'
+        mx = self.short_recording_sdk(path,output)
+        before = copy.deepcopy(self.system), sha256(self.cfg)
+        with patch('tools.check_formal_recording.time.sleep'):
+            result = check_recording(self.system,output,mx)
+        self.assertEqual(result['status'],'recording_check_passed')
+        self.assertEqual(result['time_origin_source'],'h5_boundary_events')
+        self.assertEqual(result['stimulus_pulses_sent'],0)
+        self.assertFalse(result['raw_recording'])
+        self.assertTrue((output/'recording_check.json').is_file())
+        self.assertEqual((self.system,sha256(self.cfg)),before)
+        mx.Array.return_value.download.assert_not_called()
+        mx.Array.return_value.route.assert_not_called()
+        mx.Array.return_value.close.assert_called_once()
+        for action in (mx.send,mx.DAC,mx.StimulationUnit,mx.initialize,mx.offset,mx.set_event_threshold):
+            action.assert_not_called()
+        mx.Saving.return_value.group_define.assert_not_called()
+
+    def test_short_recording_rejects_missing_markers_raw_and_other_events(self):
+        from tools.check_formal_recording import check_recording
+        for mode, raw in (('missing_end',False),('valid',True),('valid',False)):
+            with self.subTest(mode=mode,raw=raw):
+                path = self.fixture(mode,raw=raw)
+                if raw:
+                    with h5py.File(path,'r+') as handle:
+                        rows = handle['data_store/data0000/events'][:]
+                        del handle['data_store/data0000/events']
+                        handle['data_store/data0000'].create_dataset('events',data=rows[rows['eventid']!=7])
+                        handle['data_store/data0000'].create_dataset('groups/exp/raw',data=[[1]])
+                # The valid fixture contains an unrelated stimulus event, so it
+                # must also be refused as a no-stimulation recording check.
+                output = self.root/f'short_{mode}_{raw}'
+                mx = self.short_recording_sdk(path,output)
+                expected = '起止帧' if mode == 'missing_end' else 'raw电压' if raw else '其他事件'
+                with patch('tools.check_formal_recording.time.sleep'), self.assertRaisesRegex(ValueError,expected):
+                    check_recording(self.system,output,mx)
+                mx.Array.return_value.close.assert_called_once()
+                self.assertFalse((output/'recording_check.json').exists())
+                mx.DAC.assert_not_called()
 
     def test_explicit_selection_mode_changes_only_runtime_and_raw_estimate_not_protocol(self):
         original = copy.deepcopy((self.system, self.stim))

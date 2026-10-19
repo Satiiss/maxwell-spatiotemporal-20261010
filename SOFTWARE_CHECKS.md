@@ -108,3 +108,15 @@ Sequence空确认拒绝、无电压命令及标记对象生命周期；12项存�
 另以本地官方SDK 1.1.0的Event/Sequence类及隔离假传输验证真实序列化，未访问服务器或设备。
 全套检查在Windows UTF-8模式和项目内临时目录运行；真实H5事件仍须在现场首段关闭后核验。
 
+2026-10-20：b6fbcfa现场在准备start标记时停止，sequence_append实际返回空字符串。
+上一版将该底层返回值强制解释为OK的假设不成立。改用官方Sequence.append(Event)，
+其返回值应为同一个Sequence对象；None等未完成调用拒绝。sequence_send仍保留明确确认检查，
+不把空send确认或返回Sequence本身视为标记已送达；最终仍以关闭H5的实际起止事件核验。
+新增tools/check_formal_recording.py，读取既有run_formal.py的CONFIG_DIR，默认不接触设备；
+显式启用后仅在当前采集状态下录三秒spikes/events，验证映射、无raw、完整边界及无其他事件。
+不initialize/download/offset，不改变阈值或gain，不发送DAC或刺激单元命令，不自动进入正式实验；
+源配置和旧结果不修改，报告另存，实际采集设置单独打印供核对。
+完整120项Python3.10检查通过（67.562秒），包含16项存储/短录制定向检查；
+另以官方SDK 1.1.0真实Event/Sequence类和隔离传输重现底层append空返回，确认官方API返回原Sequence。
+仅在本地假传输与合成H5验证，真实设备兼容性仍需现场三秒短录制检查通过后才能确认。
+

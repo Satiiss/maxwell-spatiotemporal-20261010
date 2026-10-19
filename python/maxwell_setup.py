@@ -160,16 +160,17 @@ class MaxLabBackend:
         return self.record_epoch
 
     def _record_boundary(self, role):
-        # The live SDK returns an empty response for a directly sent Event. Use
-        # the same checked sequence transport as stimulus events, with NO DAC or
-        # stimulation-unit commands. Keep it alive until the writer has closed.
+        # Sequence.append returns the Sequence, not a server acknowledgement.
+        # Its raw server response can be empty on the live SDK. Use the official
+        # append API, check sequence_send, and verify the actual H5 events after
+        # closure. No DAC or stimulation-unit commands belong in this sequence.
         event = self.mx.Event(self.system["maxwell"]["well"], 1, BOUNDARY_IDS[role],
                               f"{BOUNDARY_PREFIX} {role} token {self.boundary_token}")
         seq = self.mx.Sequence("rec_boundary_" + uuid.uuid4().hex,
                                initial_delay=100, persistent=False)
         self.boundary_sequences.append(seq)
-        require_ok(self.mx.send_raw("sequence_append " + seq.token + "\n" + event.set()),
-                   f"准备录制{role}帧事件")
+        if seq.append(event) is not seq:
+            raise RuntimeError(f"准备录制{role}帧事件未完成；SDK未返回Sequence对象")
         require_ok(self.mx.send_raw("sequence_send " + seq.token), f"写入录制{role}帧事件")
 
     def prepare_sequence(self, condition, commands, first_id, protocol):

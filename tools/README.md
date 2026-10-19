@@ -62,3 +62,9 @@ python -B tools/plot_probe_rasters.py --run data/20261011_152853_data --electrod
 纵轴为全部记录电极的图：`aligned_electrodes.pdf`（全部trial叠加）、`electrode_artifact_zoom.pdf`（−5至10ms）和`trial_01_electrodes.pdf`等逐次图。每行一个实际记录电极，按真实electrode ID排序，静默电极保留；刻度只显示部分ID以保持可读，完整对应表为`electrode_rows.csv`。`aligned_trials.pdf`的每行则仍是一次刺激。
 
 `scripts/prepare_probe_routing.py`涉及SDK服务器软件路由，继续放在`scripts/`；Probe通过根目录`run_probe.py`启动，正式实验通过`run_formal.py`启动，内部复用`main.py`的运行与保存逻辑。
+
+`python -B tools/check_formal_recording.py --enable-hardware`读取现有`run_formal.py`的CONFIG_DIR，
+在当前采集状态下另录三秒spikes/events，并核对实际H5边界、CFG映射及无raw；结果另存
+`data/<时间>_recording_check/`，不修改源配置或旧结果，不自动进入正式实验。
+它不初始化/下载/校准，不改阈值或gain，不发送DAC或刺激单元命令；不应与其他采集同时运行。
+省略硬件标志只显示配置，不连接设备。实际采集设置会打印并写入`recording_check.json`供核对。
