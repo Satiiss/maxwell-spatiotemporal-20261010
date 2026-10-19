@@ -6,9 +6,10 @@ import logging
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
-from analysis.utils.io import parse_cfg
+from analysis.utils.io import parse_cfg, BOUNDARY_IDS, BOUNDARY_PREFIX
 
 
 def require_ok(value, action):
@@ -40,6 +41,8 @@ class MaxLabBackend:
         self.monitor = None
         self.all_units = set()
         self.monitor_log = None
+        self.boundary_token = None
+        self.boundary_end_sent = False
 
     def initialize(self, cfg):
         parent = self.system["maxwell"].get("api_parent")
@@ -140,15 +143,31 @@ class MaxLabBackend:
         self.saver.start_file(basename)
         self.file_open = True
         self.saver.group_delete_all()
-        channels = [r["channel"] for r in self.mapping]
-        require_ok(self.saver.group_define(self.system["maxwell"]["well"], "exp", channels), "定义记录group")
+        self.boundary_token = None
+        self.boundary_end_sent = False
+        if self.system["maxwell"]["raw_recording"]:
+            channels = [r["channel"] for r in self.mapping]
+            require_ok(self.saver.group_define(self.system["maxwell"]["well"], "exp", channels), "定义记录group")
         self.array.save_config(str(self.directory / "routed.cfg"))
         self.record_epoch = time.time()
         self.saver.start_recording([self.system["maxwell"]["well"]])
         self.recording = True
+        if not self.system["maxwell"]["raw_recording"]:
+            self.boundary_token = uuid.uuid4().hex
+            self.record_epoch = time.time()
+            self._record_boundary("start")
         return self.record_epoch
 
+    def _record_boundary(self, role):
+        # Event only: no DAC command and no stimulation Sequence. H5 supplies the
+        # exact hardware frame; host acknowledgement time is never the time origin.
+        event = self.mx.Event(self.system["maxwell"]["well"], 1, BOUNDARY_IDS[role],
+                              f"{BOUNDARY_PREFIX} {role} token {self.boundary_token}")
+        require_ok(self.mx.send(event), f"写入录制{role}帧事件")
+
     def prepare_sequence(self, condition, commands, first_id, protocol):
+        if not self.system["maxwell"]["raw_recording"] and first_id + (condition.kind == "temporal") >= BOUNDARY_IDS["start"]:
+            raise ValueError("刺激事件ID与录制边界事件保留ID冲突")
         seq = self.mx.Sequence(f"st_{first_id}", initial_delay=protocol["sequence_initial_delay_samples"], persistent=False)
         for opcode, args in commands:
             if opcode == "dac":
@@ -183,15 +202,32 @@ class MaxLabBackend:
         return candidates[0]
 
     def _close_recording(self):
+        errors = []
         if self.recording:
-            self.saver.stop_recording()
-            self.recording = False
-            # Cleanup must run even if Stop is pressed; do not use a stop-aware wait here.
-            time.sleep(max(self.system["maxwell"]["wait_after_recording_sec"], self.mx.Timing.waitAfterRecording))
+            if self.boundary_token and not self.boundary_end_sent:
+                try:
+                    self._record_boundary("end")
+                    self.boundary_end_sent = True
+                    # Keep the writer active for event processing, independently
+                    # of the after-stop disk-flush wait and user stop requests.
+                    time.sleep(1.0)
+                except Exception as exc:
+                    errors.append(str(exc))
+            try:
+                self.saver.stop_recording()
+                self.recording = False
+                time.sleep(max(self.system["maxwell"]["wait_after_recording_sec"], self.mx.Timing.waitAfterRecording))
+            except Exception as exc:
+                errors.append(str(exc))
         if self.file_open:
-            self.saver.stop_file()
-            self.file_open = False
-            self.saver.group_delete_all()
+            try:
+                self.saver.stop_file()
+                self.file_open = False
+                self.saver.group_delete_all()
+            except Exception as exc:
+                errors.append(str(exc))
+        if errors:
+            raise RuntimeError("录制收尾失败：" + "; ".join(errors))
 
     def abort_segment(self):
         self._close_recording()

@@ -102,7 +102,9 @@ def validate(system, stimulation, hardware=False, probe_only=False):
         raise ValueError("交叉条件必须快切，且禁止共用stim unit")
     if float(system["routing"]["settle_wait_ms"]) < 0:
         raise ValueError("settle wait不能为负")
-    if not system["maxwell"]["raw_recording"]:
+    if not isinstance(system["maxwell"]["raw_recording"], bool):
+        raise ValueError("raw_recording必须为布尔值")
+    if probe_only and not system["maxwell"]["raw_recording"]:
         raise ValueError("本次方案需要保留原始波形排查伪迹及第一脉冲污染，请启用raw_recording")
     if p["sequence_initial_delay_samples"] < 0:
         raise ValueError("初始序列延迟不能为负")
@@ -193,7 +195,12 @@ def make_plan(system, stimulation, probe_only=False, formal_units=None):
                 formal_nominal_duration_sec=duration, temporal_interval_mode=formal["temporal_interval_mode"],
                 trial_interval_sec=formal["trial_interval_sec"], sequence_initial_delay_sec=initial_delay,
                 routing_settle_sec=settle, switch_policy="complete_sequence_and_rest_before_switch",
-                raw_uncompressed_bytes_at_1024_channels_20khz=duration * 1024 * 20000 * 2,
+                recording_mode="raw" if system["maxwell"]["raw_recording"] else "spikes_events",
+                time_origin_source="raw_frame_numbers" if system["maxwell"]["raw_recording"] else "h5_boundary_events",
+                raw_uncompressed_bytes_at_1024_channels_20khz=(duration * 1024 * 20000 * 2
+                    if system["maxwell"]["raw_recording"] else 0),
+                full_raw_reference_bytes_at_1024_channels_20khz=duration * 1024 * 20000 * 2,
+                spikes_events_size_estimate_bytes=None,
                 pending_inputs=["cfg_path", "culture", "formal_selection"],
                 full_analysis_deferred=True)
 
@@ -239,6 +246,7 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
     if formal_selection is not None:
         from python.formal_selection import load_formal_selection
         handoff = load_formal_selection(formal_selection, system, stimulation, hardware=mode == "hardware")
+        system["maxwell"]["raw_recording"] = handoff[1]["recording_mode"] == "raw"
     reporter = reporter or Reporter()
     run_dir = create_run(system)
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
@@ -283,9 +291,13 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
         elif probe_only:
             logging.info("run=%s | 仅运行Probe，完成后停止；不会进入正式实验", run_dir)
         else:
-            logging.info("run=%s | 正式trial=%d | 名义时长=%.1fmin | raw未压缩估计=%.1fGB",
+            logging.info("run=%s | 正式trial=%d | 名义时长=%.1fmin | recording_mode=%s",
                          run_dir, plan["formal_trial_count"], plan["formal_nominal_duration_sec"] / 60,
-                         plan["raw_uncompressed_bytes_at_1024_channels_20khz"] / 1e9)
+                         plan["recording_mode"])
+            if system["maxwell"]["raw_recording"]:
+                logging.info("raw未压缩估计=%.1fGB", plan["raw_uncompressed_bytes_at_1024_channels_20khz"] / 1e9)
+            else:
+                logging.info("仅保存全部记录电极spikes、事件和元数据；raw波形0字节，总大小取决于实际spike数")
         if dry_run:
             snapshot = run_dir / "config_snapshot"
             snapshot.mkdir()

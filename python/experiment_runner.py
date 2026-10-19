@@ -10,7 +10,7 @@ import time
 import yaml
 import numpy as np
 
-from analysis.utils.io import read_session, read_burst_table
+from analysis.utils.io import read_session, read_burst_table, select_segment
 from analysis.utils.detection.burst import detect_burst_intervals
 from analysis.utils.probe import baseline_distribution, evaluate_probe, rank_units
 from .site_selection import build_local_units
@@ -154,6 +154,19 @@ class ExperimentRunner:
         session = read_session(path, self.cfg, self.system["maxwell"]["well"])
         logging.info("H5已关闭并读取: %s | 时长 %.3fs，映射通道%d，未映射spike%d",
                      path, session.duration_sec, len(session.mapping), session.unmapped_spike_count)
+        if not self.system["maxwell"]["raw_recording"] and session.time_origin_source != "h5_boundary_events":
+            raise ValueError("spikes_events录制缺少经H5验证的起止帧事件；停止后续刺激")
+        if not self.system["maxwell"]["raw_recording"]:
+            import h5py
+            with h5py.File(path, "r") as handle:
+                seg = select_segment(handle, self.system["maxwell"]["well"])
+                if any("raw" in group for group in seg.get("groups", {}).values()):
+                    raise ValueError("spikes_events录制仍包含raw波形组；停止后续刺激")
+        atomic_json(path.parent / "recording_interval.json", dict(
+            h5=str(path), raw_recording=self.system["maxwell"]["raw_recording"],
+            time_origin_source=session.time_origin_source, frame_origin=session.frame_origin,
+            sampling_hz=session.sampling_hz, analysis_duration_sec=session.duration_sec,
+            note="边界事件间的分析区间；不声称起点是文件首帧" if session.time_origin_source == "h5_boundary_events" else "原始录制帧区间"))
         if expected_trials or log.rows:
             rows = log.finalize(session, expected_trials)
         else:
@@ -425,7 +438,9 @@ class ExperimentRunner:
                   for stage, cs in stages for c in cs])
         (directory / "block_meta.yaml").write_text(yaml.safe_dump(dict(block=block, units=self.formal_units,
                     stages=[s for s, _ in stages], rounds=rounds, formal_trials=total,
-                    raw_recording=True, analysis_pipeline_deferred=True), allow_unicode=True), encoding="utf-8")
+                    raw_recording=self.system["maxwell"]["raw_recording"],
+                    recording_mode="raw" if self.system["maxwell"]["raw_recording"] else "spikes_events",
+                    analysis_pipeline_deferred=True), allow_unicode=True), encoding="utf-8")
         self.backend.route([e for unit in self.formal_units for e in unit["electrodes"]])
         self.spontaneous(directory / "01_pre_spont", block, "01_pre_spont", cfg["pre_spontaneous_sec"])
         self.start_segment(directory / "02_stim", block, "02_stim", total)
@@ -451,6 +466,8 @@ class ExperimentRunner:
         self.finish_segment(total)
         self.spontaneous(directory / "03_post_spont", block, "03_post_spont", cfg["post_spontaneous_sec"])
         self.result = dict(status="complete", synthetic=not self.backend.realtime,
+                    raw_recording=self.system["maxwell"]["raw_recording"],
+                    recording_mode="raw" if self.system["maxwell"]["raw_recording"] else "spikes_events",
                     execution_scope="formal_only", formal_started=True, formal_trial_count=total, probe_trial_count=0,
                     selected_formal_units=self.formal_units, analysis_pipeline_deferred=True,
                     completed_utc=utc_now(), raw_data=str(directory))

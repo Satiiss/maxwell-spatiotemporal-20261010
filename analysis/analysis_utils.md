@@ -2,10 +2,17 @@
 
 本目录工具不依赖实验runner，也不调用硬件。公开API变更时同步更新本文。
 
+`read_session`支持无raw且有`recording_boundary_v1`起止事件的H5。
+起止标记必须唯一、同token、ID正确且结束帧大于开始帧；以标记帧定义分析区间，
+不把首个spike或主机时刻当作原点，也不声称标记等于文件首帧。
+`Session.time_origin_source`为`h5_boundary_events`或旧的`raw_frame_numbers`；
+spikes/amplitudes排除标记区间外数据并保持逐项对齐，真实刺激事件按同一硬件帧原点换算。
+无标记的旧raw文件保持原算法；残缺或矛盾标记拒绝读入，不回退猜测。
+
 | 模块 | API | 数据契约 |
 |---|---|---|
 | `utils/io.py` | `parse_cfg` | 电极、通道、微米坐标字典列表；重复映射必须一致 |
-| `utils/io.py` | `read_session`, `select_segment`, `Session` | 原始H5帧原点统一换算；缺少原点或CFG冲突报错；可选amplitudes与排序后的times/channels逐项对齐 |
+| `utils/io.py` | `read_session`, `select_segment`, `Session` | 原始H5帧原点或经验证的录制起止事件帧统一换算；time_origin_source区分两者；无原点/CFG冲突报错；amplitudes与times/channels逐项对齐 |
 | `utils/io.py` | `read_burst_table` | `start_sec,end_sec`，相对基线H5起点 |
 | `utils/detection/burst.py` | `detect_burst_intervals`, `merge_intervals` | 复用既有自发检测算法，不改变阈值和回退逻辑 |
 | `utils/spontaneous.py` | `histogram_peak_ratio` | 峰bin计数/非零bin中位数；保留包含峰bin的原定义 |

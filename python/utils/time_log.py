@@ -96,12 +96,15 @@ class SegmentStimLog:
         with path.open("w", encoding="utf-8") as handle:
             handle.write(f"# block: {self.block}\n# phase: {self.phase}\n# segment_name: {self.segment_name}\n")
             handle.write(f"# record_start_epoch: {self.origin}\n# pulse_count: {len(times)}\n# generated_utc: {utc_now()}\n")
+            handle.write(f"# time_origin_source: {getattr(session, 'time_origin_source', 'raw_frame_numbers')}\n")
             handle.write("# source: " + ("HOST_ESTIMATE_UNVERIFIED" if errors else "H5_EVENTS") + "\n")
             for t in times:
                 handle.write(f"{t:.9f}\n")
         atomic_json(self.phase_dir / "segment_time_meta.json", dict(block=self.block, phase=self.phase,
                     segment_name=self.segment_name, h5_basename=session.path.name, record_start_epoch=self.origin,
                     sampling_hz=session.sampling_hz, frame_origin=session.frame_origin, stim_times_sec=times,
+                    time_origin_source=getattr(session, "time_origin_source", "raw_frame_numbers"),
+                    analysis_duration_sec=getattr(session, "duration_sec", None),
                     pulse_count=len(times), errors=errors, closed=True, verified=not errors))
         if errors and not allow_estimated:
             raise ValueError("刺激事件校验失败：" + "; ".join(errors[:10]))

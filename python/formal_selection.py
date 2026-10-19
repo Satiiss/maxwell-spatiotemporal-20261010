@@ -31,6 +31,9 @@ def validate_formal_selection(selection, system, stimulation, base_dir, hardware
     cfg_hash = sha256(cfg)
     mapping = {int(r["electrode"]): r for r in parse_cfg(cfg)}
     minimum = selection.get("minimum_success_trials", 6)
+    recording_mode = selection.get("recording_mode", "raw" if system["maxwell"]["raw_recording"] else "spikes_events")
+    if recording_mode not in ("raw", "spikes_events"):
+        raise ValueError("recording_mode只能为raw或spikes_events")
     if isinstance(minimum, bool) or not isinstance(minimum, int) or not 1 <= minimum <= 10:
         raise ValueError("minimum_success_trials必须为1–10整数")
     chosen = selection.get("units")
@@ -102,6 +105,7 @@ def validate_formal_selection(selection, system, stimulation, base_dir, hardware
         output.append(dict(formal_unit=index, source_unit=label, electrodes=list(sites),
                            source_probe_run=str(source) if source_path else None, site_metrics=metrics))
     reference = dict(selection_mode="independent_formal_selection", culture_id=culture,
+        recording_mode=recording_mode,
         cfg_sha256=cfg_hash, minimum_success_trials=minimum,
         sources=[v["reference"] for v in source_cache.values()],
         selected_units=output, source_files_modified=False)

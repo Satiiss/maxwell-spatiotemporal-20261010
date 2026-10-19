@@ -7,6 +7,11 @@
 正式执行不读取Probe候选中心、基线或评分配置。用法及零刺激联合路由检查见[FORMAL_SELECTION.md](FORMAL_SELECTION.md)。
 下文`--formal-from`及其单run合格要求仅适用于保留的旧兼容入口。
 
+正式实验可在`run_formal.py`的`SELECTION`字典中设置`"recording_mode": "spikes_events"`，
+仅保存全部记录电极spikes、事件及元数据，避免连续全通道raw的约447GB存储量。
+缺省仍为raw；无raw时以经验证的H5起止标记帧定义分析区间，不猜测时间原点，
+实际刺激事件对齐与原流程保持。不能重看电压或重新检测spikes；用法及限制见[FORMAL_SELECTION.md](FORMAL_SELECTION.md)。
+
 Probe统一使用根目录`run_probe.py`：在文件顶部填写本轮培养物、DIV、基线H5、CFG、检测阈值、gain和中心电极列表，
 换培养物无需另建或复制配置目录；顶部参数覆盖YAML默认值并保存到本轮快照，原YAML不修改。
 程序从当前CFG按物理距离选每个中心的最近三个记录电极。只测几个或重测全部均使用同一入口，

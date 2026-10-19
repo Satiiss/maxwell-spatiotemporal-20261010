@@ -9,6 +9,8 @@ import numpy as np
 import h5py
 
 CFG_ENTRY = re.compile(r"(\d+)\((\d+)\)([-+\d.eE]+)/([-+\d.eE]+);")
+BOUNDARY_IDS = {"start": 2**20 - 2, "end": 2**20 - 1}
+BOUNDARY_PREFIX = "recording_boundary_v1"
 
 
 def parse_cfg(path):
@@ -43,6 +45,29 @@ class Session:
     events: list[dict]
     unmapped_spike_count: int
     amplitudes: np.ndarray | None = None
+    time_origin_source: str = "raw_frame_numbers"
+
+
+def _event_bounds(events):
+    markers = []
+    for row in events:
+        message = row["eventmessage"]
+        if isinstance(message, bytes):
+            message = message.decode("utf-8", errors="strict")
+        message = str(message).strip()
+        if not message.startswith(BOUNDARY_PREFIX):
+            continue
+        match = re.fullmatch(BOUNDARY_PREFIX + r" (start|end) token ([0-9a-f]{32})", message)
+        if not match or int(row["eventid"]) != BOUNDARY_IDS[match[1]]:
+            raise ValueError("录制边界事件格式或ID无效")
+        markers.append((match[1], match[2], int(row["frameno"])))
+    if not markers:
+        return None
+    starts = [r for r in markers if r[0] == "start"]
+    ends = [r for r in markers if r[0] == "end"]
+    if len(starts) != 1 or len(ends) != 1 or starts[0][1] != ends[0][1] or ends[0][2] <= starts[0][2]:
+        raise ValueError("录制必须具有唯一、同token且先后正确的起止帧事件；禁止猜测时间原点")
+    return starts[0][2], ends[0][2]
 
 
 def select_segment(handle, well=0):
@@ -75,10 +100,18 @@ def read_session(path, cfg_path=None, well=0):
             if "frame_nos" in group and group["frame_nos"].size:
                 origins.append(int(group["frame_nos"][0]))
                 endings.append(int(group["frame_nos"][-1]))
-        if not origins:
-            raise ValueError("H5缺少明确的录制起始帧，禁止以首个spike作为时间原点")
-        origin = min(origins)
-        duration = (max(endings) - origin + 1) / fs
+        raw_events = seg["events"][:] if "events" in seg else []
+        bounds = _event_bounds(raw_events)
+        if bounds is not None:
+            origin, ending = bounds
+            duration = (ending - origin) / fs
+            origin_source = "h5_boundary_events"
+        elif origins:
+            origin = min(origins)
+            duration = (max(endings) - origin + 1) / fs
+            origin_source = "raw_frame_numbers"
+        else:
+            raise ValueError("H5缺少明确的录制起始帧或完整边界事件，禁止以首个spike作为时间原点")
         mapping = [dict(channel=int(r["channel"]), electrode=int(r["electrode"]),
                         x=float(r["x"]), y=float(r["y"])) for r in seg["settings/mapping"][:]
                    if 0 <= int(r["channel"]) < 1024 and int(r["electrode"]) >= 0]
@@ -92,19 +125,24 @@ def read_session(path, cfg_path=None, well=0):
         spikes = seg["spikes"][:]
         valid_channels = np.array([r["channel"] for r in mapping])
         valid = np.isin(spikes["channel"], valid_channels)
+        if bounds is not None:
+            # Boundary markers define an explicit analysis interval, not the file's
+            # first acquired sample. Exclude recorder lead-in and writer-flush tail.
+            valid &= (spikes["frameno"] >= origin) & (spikes["frameno"] < ending)
         times = (spikes["frameno"][valid].astype(np.int64) - origin) / fs
         channels = spikes["channel"][valid].astype(np.int32)
         amplitudes = spikes["amplitude"][valid].astype(float) if "amplitude" in spikes.dtype.names else None
         order = np.argsort(times, kind="stable")
         events = []
-        for row in seg.get("events", []):
+        for row in raw_events:
             message = row["eventmessage"]
             if isinstance(message, bytes):
                 message = message.decode("utf-8", errors="replace")
             events.append(dict(event_id=int(row["eventid"]), time_sec=(int(row["frameno"]) - origin) / fs,
                                eventmessage=str(message)))
         return Session(Path(path), times[order], channels[order], mapping, fs, origin, duration,
-                       events, int(np.count_nonzero(~valid)), None if amplitudes is None else amplitudes[order])
+                       events, int(np.count_nonzero(~np.isin(spikes["channel"], valid_channels))),
+                       None if amplitudes is None else amplitudes[order], origin_source)
 
 
 def read_burst_table(path):

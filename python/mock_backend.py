@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import time
+import uuid
 from pathlib import Path
 import numpy as np
 import h5py
+from analysis.utils.io import BOUNDARY_IDS, BOUNDARY_PREFIX
 
 SPIKE_DTYPE = np.dtype([("frameno", "<i8"), ("channel", "<i4"), ("amplitude", "<f4")])
 MAP_DTYPE = np.dtype([("channel", "<i4"), ("electrode", "<i4"), ("x", "<f8"), ("y", "<f8")])
@@ -97,14 +99,24 @@ class MockBackend:
             seg.create_dataset("start_time", data=[round(self.record_epoch * 1000)])
             seg.create_dataset("stop_time", data=[round((self.record_epoch + duration) * 1000)])
             seg.create_dataset("settings/sampling", data=[fs])
+            seg.create_dataset("settings/gain", data=[self.system["maxwell"]["amplifier_gain"]])
+            seg.create_dataset("settings/spike_threshold", data=[self.system["maxwell"]["event_threshold"]])
             seg.create_dataset("settings/mapping", data=np.array([tuple(r[k] for k in MAP_DTYPE.names) for r in self.mapping], dtype=MAP_DTYPE))
             data = np.array([(origin + round(t * fs), c, a) for t, c, a in self.spikes], dtype=SPIKE_DTYPE)
             data.sort(order="frameno")
             seg.create_dataset("spikes", data=data, compression="gzip")
             events = np.array([(origin + round(t * fs), 1, e, msg.encode()) for t, e, msg in self.events], dtype=EVENT_DTYPE)
             seg.create_dataset("events", data=events)
-            seg.create_dataset("groups/exp/frame_nos", data=[origin, origin + round(duration * fs) - 1])
-            seg.create_dataset("groups/exp/channels", data=[r["channel"] for r in self.mapping])
+            if self.system["maxwell"]["raw_recording"]:
+                seg.create_dataset("groups/exp/frame_nos", data=[origin, origin + round(duration * fs) - 1])
+                seg.create_dataset("groups/exp/channels", data=[r["channel"] for r in self.mapping])
+            else:
+                token = uuid.uuid4().hex
+                markers = np.array([(origin + frame, 1, BOUNDARY_IDS[role],
+                    f"{BOUNDARY_PREFIX} {role} token {token}".encode())
+                    for role, frame in (("start", 0), ("end", round(duration * fs)))], dtype=EVENT_DTYPE)
+                del seg["events"]
+                seg.create_dataset("events", data=np.concatenate([markers[:1], events, markers[1:]]))
         self.recording = False
         return self.directory / (self.basename + ".raw.h5")
 

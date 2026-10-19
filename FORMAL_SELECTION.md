@@ -4,6 +4,31 @@
 审阅状态；这些结果不再控制独立正式入口能否运行。旧`--formal-from`作为严格单run兼容入口保留。
 正式刺激条件、波形生成、快切、事件时间及三段录制算法不变，完整分析pipeline/ESRC仍暂缓。
 
+## 正式记录的存储方式
+
+在`run_formal.py`已有的`SELECTION`字典中增加`"recording_mode": "spikes_events",`，
+正式三段H5仅保存全部记录电极的spikes、刺激/边界事件、映射和SDK元数据，不定义raw电压group。
+缺省保持原raw模式；`"recording_mode": "raw"`显式保存全部记录通道电压。
+无需改源Probe快照或本机YAML，也不改变三段流程、5400 trial、波形、条件或Sequence等待。
+实际模式保存到新run的配置、计划、选点记录和block元数据。Probe继续要求raw。
+
+无raw时不能依靠`groups/*/frame_nos`：每段开始和结束分别发送只含标注的Event，
+使用保留ID 1048574/1048575及唯一token。它们不含DAC或刺激Sequence。
+读回H5验证唯一、同token、先后正确的标记，以其硬件帧差定义分析区间，
+`time_origin_source=h5_boundary_events`，明确不声称起点是文件首帧；排除起点前和结束后的spikes。
+起点不取首个spike、不取主机时间；刺激时间仍取本段H5的实际刺激事件。
+结束标记后保持writer活动1秒再停录，之后另等SDK写盘时间；异常也执行停录和关文件。
+每段保存`recording_interval.json`，含来源、帧原点、采样率及区间长度。
+前600秒自发的起止标记与无raw检查通过后，才允许进入刺激；缺失/重复标记或意外raw组会停止。
+
+这种模式不能回看完整电压、重新检测spikes或进行依赖原始波形的排查/排序。
+文件大小取决于实际spike数，不能把raw的0字节说成整场数据为0字节；计划不虚构固定大小。
+未压缩全通道raw参考量仍另存供比较。正式时长的名义估计不含SDK及writer收尾开销。
+SDK真实无raw文件的首段读回仍须现场核验；软件模拟通过不代表现场验收完成。
+
+官方依据：[Saving教程](https://api-docs.mxwbio.com/tutorial_index.html)，
+[Event API](https://api-docs.mxwbio.com/section_api/subsections/api_python.html#maxlab.system.Event)。
+
 ## 编辑文件，使用固定命令
 
 在项目根目录打开`run_formal.py`，编辑顶部`CONFIG_DIR`、`INTER_SEQUENCE_REST_SEC`和`SELECTION`：
