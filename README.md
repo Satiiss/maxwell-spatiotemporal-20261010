@@ -74,6 +74,11 @@ spatiotemporal_20261010/
 
 ## 参数
 
+独立文件离线分析：编辑`tools/analyze_recordings.py`顶部的H5路径、角色和可选CFG/trial表，
+固定运行`python -B tools/analyze_recordings.py`。无需原实验目录、培养物编号或实验入口；
+支持单文件或前/刺激/后三段，输出质检、活动/burst、条件响应和描述性前后比较。
+详见[ANALYZE_RECORDINGS.md](ANALYZE_RECORDINGS.md)。原采集入口保持不变；网络重建和ESRC仍暂缓。
+
 | 项目 | 参数或规则 |
 |---|---|
 | 培养物 | `culture.id`、`culture.div`留空，现场填写 |

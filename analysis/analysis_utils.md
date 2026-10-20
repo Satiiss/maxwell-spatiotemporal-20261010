@@ -16,7 +16,11 @@ spikes/amplitudes排除标记区间外数据并保持逐项对齐，真实刺激
 | `utils/io.py` | `parse_cfg` | 电极、通道、微米坐标字典列表；重复映射必须一致 |
 | `utils/io.py` | `read_session`, `select_segment`, `Session` | 原始H5帧原点或经验证的录制起止事件帧统一换算；time_origin_source区分两者；无原点/CFG冲突报错；amplitudes与times/channels逐项对齐 |
 | `utils/io.py` | `read_burst_table` | `start_sec,end_sec`，相对基线H5起点 |
-| `utils/detection/burst.py` | `detect_burst_intervals`, `merge_intervals` | 复用既有自发检测算法，不改变阈值和回退逻辑 |
+| `utils/recordings.py` | `summarize_activity` | 任意Session+显式参数；全时长/全映射（含静默电极）活动、burst、逐电极与群体时序 |
+| `utils/recordings.py` | `resolve_trials`, `stimulus_events` | 从H5实际事件解析trial；可选CSV仅给标签/ID，忽略主机onsets；重复/缺失ID、标签冲突与dt错误拒绝 |
+| `utils/recordings.py` | `analyze_responses`, `quiet_background` | 第一发前/最后一发后严格配对；0–3ms只诊断；PSTH遮挡bin不补零；3–200ms同宽非burst/非诱发背景 |
+| `utils/recordings.py` | `compare_pre_post`, `validate_parameters`, `DEFAULT_PARAMETERS` | gain/阈值/采样/映射一致才作描述性前后比较；不依赖runner、旧run或培养物 |
+| `utils/detection/burst.py` | `detect_burst_intervals`, `merge_intervals` | 复用既有算法；density_fallback默认True保持旧行为，独立文件分析显式False |
 | `utils/spontaneous.py` | `histogram_peak_ratio` | 峰bin计数/非零bin中位数；保留包含峰bin的原定义 |
 | `utils/spontaneous.py` | `first_activation_matrix` | channel×burst首次激活ms；缺席为NaN，沿用闭区间burst端点 |
 | `utils/spontaneous.py` | `directed_delay_edges` | 共同burst严格>阈值、峰比>=阈值、峰延时绝对值严格>阈值；正B−A为A→B，无边数上限 |

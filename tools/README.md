@@ -17,6 +17,12 @@
 | `review_probe_paired_ratio.py` | 对旧Probe试算后10–50ms严格大于同次前−50至−10ms的1.5倍 |
 | `probe_rate_variance.py` | 发放率对照的辅助模块，由入口调用 |
 | `probe_raster_review.py` | 刺激对齐和局部绘图辅助模块，由入口调用 |
+| `analyze_recordings.py` | 独立H5路径输入；顶部填写一个或多个文件、角色、可选CFG/trial表，固定命令运行；质检、活动/burst、条件响应和描述性前后比较 |
+| `recording_figures.py` | 上述独立分析的600dpi绘图辅助模块，不连接设备 |
+
+独立文件分析见[ANALYZE_RECORDINGS.md](../ANALYZE_RECORDINGS.md)：编辑
+`tools/analyze_recordings.py`顶部RECORDINGS后运行`python -B tools/analyze_recordings.py`。
+不要求原实验目录，不读取实验入口或培养物配置。默认另存到`data/recording_analysis/<时间>_analysis/`。
 
 ## 在文件顶部检查新的自发录制
 

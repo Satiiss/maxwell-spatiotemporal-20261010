@@ -30,7 +30,7 @@ def merge_intervals(intervals, gap_s):
 
 def detect_burst_intervals(spike_lookup, *, bin_ms=1.0, smooth_ms=50.0,
                            threshold_z=6.0, min_duration_ms=30.0,
-                           merge_gap_ms=30.0, min_spikes=5):
+                           merge_gap_ms=30.0, min_spikes=5, density_fallback=True):
     arrays = [np.asarray(v, float) for v in spike_lookup.values() if len(v)]
     if not arrays:
         return [], {}
@@ -76,7 +76,7 @@ def detect_burst_intervals(spike_lookup, *, bin_ms=1.0, smooth_ms=50.0,
             a, b = float(edges[left]), float(edges[min(right, edges.size - 1)])
             if np.count_nonzero((spikes >= a) & (spikes <= b)) >= int(min_spikes):
                 intervals.append((a, b))
-    if not intervals:
+    if not intervals and density_fallback:
         intervals = _density_fallback(spikes, max(bin_s, min_duration_ms / 1000), int(min_spikes), max(0, merge_gap_ms / 1000))
     intervals = merge_intervals(intervals, max(0, merge_gap_ms / 1000))
     diagnostics = {"edges_sec": edges, "counts": counts, "smoothed_counts": rate,
