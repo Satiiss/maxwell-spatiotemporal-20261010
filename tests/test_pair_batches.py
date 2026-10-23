@@ -97,6 +97,8 @@ class PairBatchChecks(unittest.TestCase):
                 dry=execute(fixture.system,stim,formal_selection=fixture.file,dry_run=True)
                 hardware.assert_not_called()
                 self.assertFalse(list(dry.rglob('*.raw.h5')))
+                # create_run uses second-resolution names; isolate dry/mock roots.
+                fixture.system['data']['root']=str(fixture.root/'mock_outputs')
                 run=execute(fixture.system,stim,formal_selection=fixture.file)
                 hardware.assert_not_called()
             result=json.loads((run/'experiment_result.json').read_text())
