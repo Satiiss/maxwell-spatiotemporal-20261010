@@ -274,6 +274,7 @@ class ExperimentRunner:
                                  else "single_connect") if condition.kind == "probe" else self.system["routing"]["mode"],
                    interval_sec=interval_sec, response_anchor="second" if condition.kind == "temporal" else "first")
         if formal:
+            row.update(getattr(self,'_trial_context',{}))
             row.update(sequence_guard_sec=guard_sec,
                 switch_policy="complete_sequence_and_rest_before_switch",
                 post_pulse_rest_sec=(self.stimulation["formal"]["trial_interval_sec"]
@@ -424,6 +425,16 @@ class ExperimentRunner:
         return self.formal_units
 
     def formal(self):
+        if self.stimulation['formal'].get('schedule_mode')=='pair_batches':
+            from .pair_batches import run_pair_batches
+            actual=run_pair_batches(self)
+            self.result=dict(status='complete',synthetic=not self.backend.realtime,
+                raw_recording=self.system['maxwell']['raw_recording'],
+                recording_mode='raw' if self.system['maxwell']['raw_recording'] else 'spikes_events',
+                execution_scope='formal_only',formal_started=True,probe_trial_count=0,
+                selected_formal_units=self.formal_units,analysis_pipeline_deferred=True,completed_utc=utc_now(),
+                raw_data=str(self.run_dir/'raw_data'/'spatiotemporal'),**actual)
+            return
         cfg = self.stimulation["formal"]
         stages = formal_conditions(self.formal_units, cfg["dt_ms"])
         rounds = cfg["trials_per_condition"]

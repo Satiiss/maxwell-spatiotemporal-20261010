@@ -96,8 +96,13 @@ def validate(system, stimulation, hardware=False, probe_only=False):
         raise ValueError("trial数必须为正整数")
     if not probe_only and stimulation["formal"]["temporal_interval_mode"] not in ("after_second", "onset_to_onset"):
         raise ValueError("时序间隔模式必须显式设置")
-    if not probe_only and stimulation["formal"]["condition_order"] != "cyclic":
-        raise ValueError("本方案要求循环交叉条件刺激")
+    if not probe_only:
+        schedule_mode=stimulation['formal'].get('schedule_mode','legacy')
+        if schedule_mode=='pair_batches':
+            from python.pair_batches import validate_batch_config
+            validate_batch_config(stimulation['formal'])
+        elif schedule_mode!='legacy' or stimulation['formal']['condition_order']!='cyclic':
+            raise ValueError('未识别的正式调度；旧方案要求cyclic')
     if system["routing"]["mode"] != "pool_fast" or not system["routing"]["require_unique_stim_units"]:
         raise ValueError("交叉条件必须快切，且禁止共用stim unit")
     if float(system["routing"]["settle_wait_ms"]) < 0:
@@ -191,6 +196,12 @@ def make_plan(system, stimulation, probe_only=False, formal_units=None):
     duration = sum(r["nominal_duration_sec"] for r in stage_rows) + formal["pre_spontaneous_sec"] + formal["post_spontaneous_sec"]
     duration += (len(stage_rows) - 1) * formal["rest_between_stages_sec"] + formal["rest_after_last_stage_sec"]
     duration += formal["recording_tail_sec"]
+    schedule_details={}
+    if formal.get('schedule_mode')=='pair_batches':
+        from python.pair_batches import build_batch_schedule,batch_plan
+        schedule_details=batch_plan(build_batch_schedule(units,formal),system,stimulation)
+        stage_rows=schedule_details['stages']
+        duration=schedule_details['formal_nominal_duration_sec']
     return dict(execution_scope="full", stages=stage_rows, formal_trial_count=sum(r["trials"] for r in stage_rows),
                 formal_nominal_duration_sec=duration, temporal_interval_mode=formal["temporal_interval_mode"],
                 trial_interval_sec=formal["trial_interval_sec"], sequence_initial_delay_sec=initial_delay,
@@ -202,7 +213,8 @@ def make_plan(system, stimulation, probe_only=False, formal_units=None):
                 full_raw_reference_bytes_at_1024_channels_20khz=duration * 1024 * 20000 * 2,
                 spikes_events_size_estimate_bytes=None,
                 pending_inputs=["cfg_path", "culture", "formal_selection"],
-                full_analysis_deferred=True)
+                full_analysis_deferred=True, **{k:v for k,v in schedule_details.items()
+                    if k not in ('formal_trial_count','formal_nominal_duration_sec','stages')})
 
 
 def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quick=False, compile_cpp=False,
@@ -273,9 +285,15 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
             if formal_selection is not None:
                 import shutil
                 shutil.copy2(formal_selection, run_dir / ("formal_selection_source" + Path(formal_selection).suffix))
-            write_csv(run_dir / "formal_condition_plan.csv", [dict(stage=stage, **asdict(c))
-                for stage, conditions in formal_conditions(handoff[0], stimulation["formal"]["dt_ms"])
-                for c in conditions])
+            if stimulation['formal'].get('schedule_mode')=='pair_batches':
+                from python.pair_batches import build_batch_schedule,condition_manifest,schedule_manifest
+                schedule=build_batch_schedule(handoff[0],stimulation['formal'])
+                write_csv(run_dir/'formal_condition_plan.csv',condition_manifest(schedule))
+                write_csv(run_dir/'formal_schedule_plan.csv',schedule_manifest(schedule))
+            else:
+                write_csv(run_dir / "formal_condition_plan.csv", [dict(stage=stage, **asdict(c))
+                    for stage, conditions in formal_conditions(handoff[0], stimulation["formal"]["dt_ms"])
+                    for c in conditions])
         if formal_routing_check:
             plan.update(execution_scope="formal_routing_check", planned_formal_trial_count=plan["formal_trial_count"],
                         stages=[], formal_trial_count=0,

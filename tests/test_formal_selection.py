@@ -197,7 +197,8 @@ class FormalSelectionChecks(unittest.TestCase):
         start, end = template.index("SELECTION = {"), template.index("# End editable section")
         template = template[:start] + "SELECTION = " + repr(self.selection) + "\n" + template[end:]
         template = template.replace('CONFIG_DIR = "config"', 'CONFIG_DIR = ' + repr(str(config)))
-        template = template.replace("INTER_SEQUENCE_REST_SEC = None", "INTER_SEQUENCE_REST_SEC = 3.0")
+        import re
+        template = re.sub(r'^INTER_SEQUENCE_REST_SEC = [^\n]*', 'INTER_SEQUENCE_REST_SEC = 3.0', template, flags=re.M)
         # This case only tests the default no-device entry, using explicit manual selections.
         selected = copy.deepcopy(self.selection)
         for unit in selected["units"]:
