@@ -101,6 +101,9 @@ def validate(system, stimulation, hardware=False, probe_only=False):
         if schedule_mode=='pair_batches':
             from python.pair_batches import validate_batch_config
             validate_batch_config(stimulation['formal'])
+        elif schedule_mode=='dt_sessions':
+            from python.dt_sessions import validate_session_config
+            validate_session_config(stimulation['formal'])
         elif schedule_mode!='legacy' or stimulation['formal']['condition_order']!='cyclic':
             raise ValueError('未识别的正式调度；旧方案要求cyclic')
     if system["routing"]["mode"] != "pool_fast" or not system["routing"]["require_unique_stim_units"]:
@@ -197,6 +200,11 @@ def make_plan(system, stimulation, probe_only=False, formal_units=None):
     duration += (len(stage_rows) - 1) * formal["rest_between_stages_sec"] + formal["rest_after_last_stage_sec"]
     duration += formal["recording_tail_sec"]
     schedule_details={}
+    if formal.get('schedule_mode')=='dt_sessions':
+        from python.dt_sessions import build_session_schedule, session_plan
+        schedule_details=session_plan(build_session_schedule(units,formal),system,stimulation)
+        stage_rows=schedule_details['stages']
+        duration=schedule_details['formal_nominal_duration_sec']
     if formal.get('schedule_mode')=='pair_batches':
         from python.pair_batches import build_batch_schedule,batch_plan
         schedule_details=batch_plan(build_batch_schedule(units,formal),system,stimulation)
@@ -285,9 +293,13 @@ def execute(system, stimulation, mode="mock", reporter=None, dry_run=False, quic
             if formal_selection is not None:
                 import shutil
                 shutil.copy2(formal_selection, run_dir / ("formal_selection_source" + Path(formal_selection).suffix))
-            if stimulation['formal'].get('schedule_mode')=='pair_batches':
+            if stimulation['formal'].get('schedule_mode') in ('pair_batches','dt_sessions'):
                 from python.pair_batches import build_batch_schedule,condition_manifest,schedule_manifest
-                schedule=build_batch_schedule(handoff[0],stimulation['formal'])
+                if stimulation['formal'].get('schedule_mode')=='dt_sessions':
+                    from python.dt_sessions import build_session_schedule
+                    schedule=build_session_schedule(handoff[0],stimulation['formal'])
+                else:
+                    schedule=build_batch_schedule(handoff[0],stimulation['formal'])
                 write_csv(run_dir/'formal_condition_plan.csv',condition_manifest(schedule))
                 write_csv(run_dir/'formal_schedule_plan.csv',schedule_manifest(schedule))
             else:

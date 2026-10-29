@@ -1,5 +1,8 @@
 # MaxWell 空间组合与时序刺激实验
 
+第三批独立时段入口为 `run_formal_third.py`，方案、固定命令、分支更新及检查记录见
+[THIRD_BATCH_DESIGN.md](THIRD_BATCH_DESIGN.md)。原 `run_formal.py` 与第二批入口继续保留。
+
 本项目按 `实验方案20261009.docx`（正文标题为“实验方案20261010”）和 docs 的 Markdown 规范生成。实现自发基线 burst/出入度 Map、人工复核候选中心、Probe、有效电极筛选、单电极刺激、双电极同步刺激和双电极时序刺激的录制与调度。完整正式响应分析 pipeline 和 ESRC 验证暂不实现。
 
 2026-10-17：新增独立正式入口`run_formal.py`。在该文件顶部编辑配置目录、三组双电极及可选Probe来源，

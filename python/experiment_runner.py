@@ -425,9 +425,13 @@ class ExperimentRunner:
         return self.formal_units
 
     def formal(self):
-        if self.stimulation['formal'].get('schedule_mode')=='pair_batches':
-            from .pair_batches import run_pair_batches
-            actual=run_pair_batches(self)
+        if self.stimulation['formal'].get('schedule_mode') in ('pair_batches','dt_sessions'):
+            if self.stimulation['formal'].get('schedule_mode')=='dt_sessions':
+                from .dt_sessions import run_dt_session
+                actual=run_dt_session(self)
+            else:
+                from .pair_batches import run_pair_batches
+                actual=run_pair_batches(self)
             self.result=dict(status='complete',synthetic=not self.backend.realtime,
                 raw_recording=self.system['maxwell']['raw_recording'],
                 recording_mode='raw' if self.system['maxwell']['raw_recording'] else 'spikes_events',
