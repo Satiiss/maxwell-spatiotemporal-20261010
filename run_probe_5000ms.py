@@ -13,11 +13,12 @@ ROOT = Path(__file__).resolve().parent
 
 # Edit only this section. Acquisition inputs come from your existing run_probe.py.
 INTERVAL_MS = 5000.0  # Pulse onset to onset; 5000 ms = 0.2 Hz.
+EXTRA_CENTER_ELECTRODES = []  # Append untested centers after the original roster; preserve its IDs.
 ELECTRODES = []  # Explicit IDs only, e.g. the reference site and one weak site.
 # Empty is an error: it never silently repeats the full candidate roster.
 
 
-def configure_slow_probe(system, stimulation, centers, electrodes, *, interval_ms=5000., **kwargs):
+def configure_slow_probe(system, stimulation, centers, electrodes, *, interval_ms=5000., extra_centers=(), **kwargs):
     from run_probe import configure_probe
     if (isinstance(interval_ms, bool) or not isinstance(interval_ms, (int, float))
             or not math.isfinite(interval_ms) or interval_ms < 500):
@@ -26,7 +27,13 @@ def configure_slow_probe(system, stimulation, centers, electrodes, *, interval_m
     if (not sites or any(isinstance(e, bool) or not isinstance(e, Integral) or e < 0 for e in sites)
             or len(set(sites)) != len(sites)):
         raise ValueError('请显式填写不同的非负整数ELECTRODES；空列表不会自动测全部位点')
-    system, stimulation = configure_probe(system, stimulation, centers, **kwargs)
+    original_centers, added = list(centers), list(extra_centers)
+    combined = original_centers + added
+    if (not combined or any(isinstance(e, bool) or not isinstance(e, Integral) or e < 0 for e in combined)
+            or len(set(combined)) != len(combined)):
+        raise ValueError('原中心与追加中心必须为不同的非负整数，不能重复追加或重排原候选')
+    system, stimulation = configure_probe(system, stimulation, combined, **kwargs)
+    system['manual_inputs']['slow_probe_extra_centers'] = [int(e) for e in added]
     system['manual_inputs']['slow_probe_electrodes'] = [int(e) for e in sites]
     stimulation['probe'].update(frequency_hz=1000./interval_ms, interval_ms=float(interval_ms),
         recording_tail_sec=max(1., interval_ms/1000. + .01))
@@ -64,6 +71,7 @@ def preflight_slow(system, stimulation):
     interval = stimulation['probe']['interval_ms']/1000.
     plan.update(candidate_units=units, probe_trial_count=len(sites)*10,
         explicit_probe_electrodes=list(sites), probe_mode='slow_single_site',
+        extra_center_electrodes=list(system['manual_inputs'].get('slow_probe_extra_centers', [])),
         interval_ms=stimulation['probe']['interval_ms'], frequency_hz=1./interval,
         automatically_starts_formal=False,
         minimum_recording_duration_sec=len(sites)*(.1+9*interval+stimulation['probe']['recording_tail_sec']))
@@ -238,7 +246,7 @@ def main():
     path = Path(original.CONFIG_DIR).expanduser()
     system, stimulation = load_configuration(path if path.is_absolute() else ROOT/path)
     system, stimulation = configure_slow_probe(system, stimulation, original.CENTER_ELECTRODES, ELECTRODES,
-        interval_ms=INTERVAL_MS, minimum=original.MIN_SUCCESS_TRIALS,
+        interval_ms=INTERVAL_MS, extra_centers=EXTRA_CENTER_ELECTRODES, minimum=original.MIN_SUCCESS_TRIALS,
         culture_id=original.CULTURE_ID, culture_div=original.CULTURE_DIV,
         baseline_h5=original.BASELINE_H5, cfg_path=original.CFG_PATH,
         event_threshold=original.EVENT_THRESHOLD if original.EVENT_THRESHOLD is not None else 5.,
